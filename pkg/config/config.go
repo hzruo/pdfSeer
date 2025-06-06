@@ -1,0 +1,152 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+// AIConfig AI服务配置
+type AIConfig struct {
+	BaseURL         string  `json:"base_url"`
+	APIKey          string  `json:"api_key"`
+	Model           string  `json:"model"`
+	Timeout         int     `json:"timeout"`
+	RequestInterval float64 `json:"request_interval"`
+	BurstLimit      int     `json:"burst_limit"`
+	MaxRetries      int     `json:"max_retries"`      // 最大重试次数
+	RetryDelay      int     `json:"retry_delay"`      // 重试延迟（秒）
+}
+
+// AppConfig 应用配置
+type AppConfig struct {
+	AI      AIConfig `json:"ai"`
+	Storage struct {
+		CacheTTL        string `json:"cache_ttl"`
+		MaxCacheSize    string `json:"max_cache_size"`
+		HistoryRetention string `json:"history_retention"`
+	} `json:"storage"`
+	UI struct {
+		Theme       string `json:"theme"`
+		DefaultFont string `json:"default_font"`
+		Layout      string `json:"layout"`
+	} `json:"ui"`
+}
+
+// ConfigManager 配置管理器
+type ConfigManager struct {
+	configPath string
+	config     AppConfig
+	mu         sync.RWMutex
+}
+
+// NewConfigManager 创建配置管理器
+func NewConfigManager() (*ConfigManager, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("获取用户目录失败: %w", err)
+	}
+
+	configDir := filepath.Join(homeDir, ".pdf-ocr-ai")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return nil, fmt.Errorf("创建配置目录失败: %w", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.json")
+	
+	cm := &ConfigManager{
+		configPath: configPath,
+	}
+
+	// 加载配置
+	if err := cm.Load(); err != nil {
+		return nil, err
+	}
+
+	return cm, nil
+}
+
+// Load 加载配置
+func (cm *ConfigManager) Load() error {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// 设置默认配置
+	cm.config = AppConfig{
+		AI: AIConfig{
+			BaseURL:         "https://api.openai.com/v1",
+			Model:           "gpt-4-vision-preview",
+			Timeout:         30,
+			RequestInterval: 1.0,
+			BurstLimit:      3,
+			MaxRetries:      3,  // 默认重试3次
+			RetryDelay:      1,  // 默认延迟1秒
+		},
+	}
+	cm.config.Storage.CacheTTL = "24h"
+	cm.config.Storage.MaxCacheSize = "2GB"
+	cm.config.Storage.HistoryRetention = "30d"
+	cm.config.UI.Theme = "light"
+	cm.config.UI.DefaultFont = "system"
+	cm.config.UI.Layout = "split"
+
+	// 尝试从文件加载
+	if data, err := os.ReadFile(cm.configPath); err == nil {
+		if err := json.Unmarshal(data, &cm.config); err != nil {
+			return fmt.Errorf("解析配置文件失败: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Save 保存配置
+func (cm *ConfigManager) Save() error {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	data, err := json.MarshalIndent(cm.config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化配置失败: %w", err)
+	}
+
+	if err := os.WriteFile(cm.configPath, data, 0600); err != nil {
+		return fmt.Errorf("保存配置文件失败: %w", err)
+	}
+
+	return nil
+}
+
+// GetAIConfig 获取AI配置
+func (cm *ConfigManager) GetAIConfig() AIConfig {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.config.AI
+}
+
+// UpdateAIConfig 更新AI配置
+func (cm *ConfigManager) UpdateAIConfig(config AIConfig) error {
+	cm.mu.Lock()
+	cm.config.AI = config
+	cm.mu.Unlock()
+	
+	return cm.Save()
+}
+
+// GetConfig 获取完整配置
+func (cm *ConfigManager) GetConfig() AppConfig {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.config
+}
+
+// UpdateConfig 更新完整配置
+func (cm *ConfigManager) UpdateConfig(config AppConfig) error {
+	cm.mu.Lock()
+	cm.config = config
+	cm.mu.Unlock()
+	
+	return cm.Save()
+}
