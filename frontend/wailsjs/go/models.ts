@@ -6,6 +6,8 @@ export namespace config {
 	    model: string;
 	    ocr_model: string;
 	    text_model: string;
+	    models_endpoint: string;
+	    chat_endpoint: string;
 	    timeout: number;
 	    request_interval: number;
 	    burst_limit: number;
@@ -23,6 +25,8 @@ export namespace config {
 	        this.model = source["model"];
 	        this.ocr_model = source["ocr_model"];
 	        this.text_model = source["text_model"];
+	        this.models_endpoint = source["models_endpoint"];
+	        this.chat_endpoint = source["chat_endpoint"];
 	        this.timeout = source["timeout"];
 	        this.request_interval = source["request_interval"];
 	        this.burst_limit = source["burst_limit"];

@@ -15,6 +15,8 @@ type AIConfig struct {
 	Model           string  `json:"model"`            // 保持向后兼容，默认OCR模型
 	OCRModel        string  `json:"ocr_model"`        // OCR识别专用模型
 	TextModel       string  `json:"text_model"`       // 文本处理专用模型
+	ModelsEndpoint  string  `json:"models_endpoint"`  // 模型列表API端点
+	ChatEndpoint    string  `json:"chat_endpoint"`    // 对话API端点
 	Timeout         int     `json:"timeout"`
 	RequestInterval float64 `json:"request_interval"`
 	BurstLimit      int     `json:"burst_limit"`
@@ -82,6 +84,8 @@ func (cm *ConfigManager) Load() error {
 			Model:           "gpt-4-vision-preview", // 保持向后兼容
 			OCRModel:        "gpt-4-vision-preview", // OCR默认使用视觉模型
 			TextModel:       "gpt-4",                // 文本处理默认使用GPT-4
+			ModelsEndpoint:  "/models",              // 默认模型列表端点
+			ChatEndpoint:    "/chat/completions",    // 默认对话端点
 			Timeout:         30,
 			RequestInterval: 1.0,
 			BurstLimit:      3,

@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { GetConfig, UpdateConfig, CheckSystemDependencies, GetInstallInstructions } from '../../wailsjs/go/main/App'
 import CustomDialog from './CustomDialog.vue'
 
@@ -16,6 +16,8 @@ const config = ref<any>({
     base_url: 'https://api.openai.com/v1',
     api_key: '',
     model: 'gpt-4-vision-preview',
+    models_endpoint: '/models',
+    chat_endpoint: '/chat/completions',
     timeout: 30,
     request_interval: 1.0,
     burst_limit: 3,
@@ -43,12 +45,60 @@ const modelError = ref('')
 const systemDependencies = ref<any>(null)
 const loadingDependencies = ref(false)
 const installInstructions = ref<any>(null)
+const dependenciesLoaded = ref(false)  // 标记依赖是否已加载
+
+// 当前选择的预设
+const selectedPreset = ref('')
+
+// 保存用户的自定义配置
+const customConfig = ref({
+  base_url: '',
+  models_endpoint: '/models',
+  chat_endpoint: '/chat/completions',
+  api_key: '',
+  ocr_model: '',
+  text_model: ''
+})
+
+// 标记是否已经有真正的自定义配置
+const hasRealCustomConfig = ref(false)
 
 // 主题选项
 const themeOptions = [
   { value: 'light', label: '浅色主题' },
   { value: 'dark', label: '深色主题' },
   { value: 'auto', label: '跟随系统' }
+]
+
+// API服务预设模板
+const apiPresets = [
+  {
+    name: 'OpenAI',
+    base_url: 'https://api.openai.com/v1',
+    models_endpoint: '/models',
+    chat_endpoint: '/chat/completions'
+  },
+  {
+    name: 'Google Gemini',
+    base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    models_endpoint: '/models',
+    chat_endpoint: '/chat/completions'
+  },
+  {
+    name: 'Pollinations（免费）',
+    base_url: 'https://text.pollinations.ai/openai',
+    models_endpoint: '/models',
+    chat_endpoint: '/chat/completions',
+    api_key: 'sk-pollination',
+    ocr_model: 'openai-large',
+    text_model: 'deepseek-reasoning'
+  },
+  {
+    name: '自定义配置',
+    base_url: '',
+    models_endpoint: '/models',
+    chat_endpoint: '/chat/completions'
+  }
 ]
 
 // 对话框状态
@@ -64,8 +114,13 @@ const dialog = ref({
 
 // 生命周期
 onMounted(async () => {
+  // 优先加载配置，不等待依赖检测
   await loadConfig()
-  await loadDependencies()
+
+  // 异步加载依赖状态，不阻塞页面显示
+  setTimeout(() => {
+    loadDependencies()
+  }, 200)
 })
 
 // 监听API配置变化，自动获取模型列表
@@ -79,6 +134,40 @@ watch(() => [config.value.ai.base_url, config.value.ai.api_key],
   { deep: true }
 )
 
+// 标记是否正在应用预设，避免循环触发
+const applyingPreset = ref(false)
+
+// 监听配置变化，自动检测预设
+watch(() => [config.value.ai.base_url, config.value.ai.models_endpoint, config.value.ai.chat_endpoint, config.value.ai.api_key, config.value.ai.ocr_model, config.value.ai.text_model],
+  () => {
+    // 如果正在应用预设，跳过检测
+    if (applyingPreset.value) {
+      return
+    }
+
+    // 如果当前是自定义配置模式，且用户有输入，标记为真实的自定义配置
+    if (selectedPreset.value === '自定义配置' && config.value.ai.base_url) {
+      hasRealCustomConfig.value = true
+      saveAsCustomConfig()
+      console.log('用户在自定义配置模式下输入，保存配置:', customConfig.value)
+    }
+
+    // 只有在不是通过预设选择器触发的变化时才重新检测
+    setTimeout(() => {
+      const oldPreset = selectedPreset.value
+      detectCurrentPreset()
+
+      // 如果从预设变为自定义配置，说明用户手动修改了配置
+      if (oldPreset !== '自定义配置' && oldPreset !== '' && selectedPreset.value === '自定义配置') {
+        console.log('用户手动修改配置，自动保存为自定义配置')
+        hasRealCustomConfig.value = true
+        saveAsCustomConfig()
+      }
+    }, 50)
+  },
+  { deep: true }
+)
+
 // 方法
 const loadConfig = async () => {
   try {
@@ -86,9 +175,16 @@ const loadConfig = async () => {
     const currentConfig = await GetConfig()
     if (currentConfig) {
       config.value = currentConfig
-      // 如果已有API配置，尝试获取模型列表
+
+      // 检测当前配置对应的预设
+      detectCurrentPreset()
+
+      // 如果已有API配置，异步获取模型列表（不阻塞页面加载）
       if (config.value.ai.base_url && config.value.ai.api_key) {
-        await fetchModels()
+        // 使用setTimeout让模型获取异步进行
+        setTimeout(() => {
+          fetchModels()
+        }, 100)
       }
     }
   } catch (error) {
@@ -113,8 +209,14 @@ const fetchModels = async () => {
     loadingModels.value = true
     modelError.value = ''
 
-    // 调用OpenAI API获取模型列表
-    const response = await fetch(`${config.value.ai.base_url}/models`, {
+    // 构建模型API URL
+    const modelsEndpoint = config.value.ai.models_endpoint || '/models'
+    const modelsUrl = `${config.value.ai.base_url}${modelsEndpoint}`
+
+    console.log('获取模型列表:', modelsUrl)
+
+    // 调用API获取模型列表
+    const response = await fetch(modelsUrl, {
       headers: {
         'Authorization': `Bearer ${config.value.ai.api_key}`,
         'Content-Type': 'application/json'
@@ -153,15 +255,8 @@ const fetchModels = async () => {
     console.error('获取模型列表失败:', error)
     modelError.value = `获取模型列表失败: ${error}`
 
-    // 使用默认模型列表（包含所有类型的模型）
-    modelOptions.value = [
-      { value: 'gpt-4-vision-preview', label: 'GPT-4 Vision Preview' },
-      { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-      { value: 'gpt-4o', label: 'GPT-4o' },
-      { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-      { value: 'gpt-4', label: 'GPT-4' },
-      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' }
-    ]
+    // 清空模型列表，不显示默认模型
+    modelOptions.value = []
   } finally {
     loadingModels.value = false
   }
@@ -181,17 +276,7 @@ const formatModelName = (modelId: string) => {
   return nameMap[modelId] || modelId
 }
 
-// 检查是否为视觉模型
-const isVisionModel = (modelId: string) => {
-  const visionModels = [
-    'gpt-4-vision-preview',
-    'gpt-4-turbo',
-    'gpt-4o',
-    'gpt-4o-mini'
-  ]
-
-  return visionModels.some(vm => modelId.includes(vm))
-}
+// 移除视觉模型检测 - 让用户自己判断，避免误导
 
 // 对话框辅助函数
 const showDialog = (options: {
@@ -252,6 +337,8 @@ const resetToDefaults = () => {
           model: 'gpt-4-vision-preview',
           ocr_model: 'gpt-4-vision-preview',
           text_model: 'gpt-4',
+          models_endpoint: '/models',
+          chat_endpoint: '/chat/completions',
           timeout: 30,
           request_interval: 1.0,
           burst_limit: 3,
@@ -298,8 +385,14 @@ const testConnection = async () => {
   }
 
   try {
+    // 构建测试URL
+    const modelsEndpoint = config.value.ai.models_endpoint || '/models'
+    const testUrl = `${config.value.ai.base_url}${modelsEndpoint}`
+
+    console.log('测试连接:', testUrl)
+
     // 测试连接
-    const response = await fetch(`${config.value.ai.base_url}/models`, {
+    const response = await fetch(testUrl, {
       headers: {
         'Authorization': `Bearer ${config.value.ai.api_key}`,
         'Content-Type': 'application/json'
@@ -327,6 +420,11 @@ const testConnection = async () => {
 
 // 加载依赖状态
 const loadDependencies = async () => {
+  // 如果已经加载过，直接返回
+  if (dependenciesLoaded.value) {
+    return
+  }
+
   try {
     loadingDependencies.value = true
 
@@ -337,6 +435,9 @@ const loadDependencies = async () => {
     // 获取安装说明
     const instructions = await GetInstallInstructions()
     installInstructions.value = instructions
+
+    // 标记为已加载
+    dependenciesLoaded.value = true
 
     console.log('依赖检查结果:', deps)
     console.log('安装说明:', instructions)
@@ -349,6 +450,197 @@ const loadDependencies = async () => {
     })
   } finally {
     loadingDependencies.value = false
+  }
+}
+
+// 强制重新加载依赖（用于手动重新检查）
+const forceReloadDependencies = async () => {
+  dependenciesLoaded.value = false
+  await loadDependencies()
+}
+
+// 检测当前配置对应的预设
+const detectCurrentPreset = () => {
+  const currentConfig = config.value.ai
+
+  for (const preset of apiPresets) {
+    // 跳过自定义配置预设
+    if (preset.name === '自定义配置') continue
+
+    // 基本URL和端点匹配
+    const baseUrlMatch = preset.base_url === currentConfig.base_url
+    const modelsEndpointMatch = preset.models_endpoint === (currentConfig.models_endpoint || '/models')
+    const chatEndpointMatch = preset.chat_endpoint === (currentConfig.chat_endpoint || '/chat/completions')
+
+    if (baseUrlMatch && modelsEndpointMatch && chatEndpointMatch) {
+      // 对于Pollinations预设，还需要检查模型配置
+      if (preset.name === 'Pollinations（免费）') {
+        const ocrModelMatch = preset.ocr_model === currentConfig.ocr_model
+        const textModelMatch = preset.text_model === currentConfig.text_model
+
+        if (ocrModelMatch && textModelMatch) {
+          selectedPreset.value = preset.name
+          return
+        }
+      } else {
+        selectedPreset.value = preset.name
+        return
+      }
+    }
+  }
+
+  // 如果没有匹配的预设，设置为自定义
+  if (currentConfig.base_url) {
+    selectedPreset.value = '自定义配置'
+    // 不在这里保存，让用户手动输入时再保存
+    console.log('检测到自定义配置，但不自动保存')
+  } else {
+    selectedPreset.value = ''
+  }
+}
+
+// 保存当前配置为自定义配置
+const saveAsCustomConfig = () => {
+  customConfig.value = {
+    base_url: config.value.ai.base_url,
+    models_endpoint: config.value.ai.models_endpoint || '/models',
+    chat_endpoint: config.value.ai.chat_endpoint || '/chat/completions',
+    api_key: config.value.ai.api_key,
+    ocr_model: config.value.ai.ocr_model,
+    text_model: config.value.ai.text_model
+  }
+}
+
+// 应用预设配置
+const applyPreset = (event: Event) => {
+  const target = event.target as HTMLSelectElement
+  const presetName = target.value
+
+  // 标记正在应用预设，避免触发watch
+  applyingPreset.value = true
+
+  try {
+    // 只有当前真的是自定义配置且有真实配置时才保存
+    if (selectedPreset.value === '自定义配置' && hasRealCustomConfig.value) {
+      saveAsCustomConfig()
+      console.log('保存当前自定义配置:', customConfig.value)
+    }
+
+    selectedPreset.value = presetName
+
+    if (!presetName) return
+
+    if (presetName === '自定义配置') {
+      // 立即重置标记，确保界面能正常更新
+      applyingPreset.value = false
+
+      // 如果有真实的自定义配置，恢复它
+      if (hasRealCustomConfig.value) {
+        config.value.ai.base_url = customConfig.value.base_url
+        config.value.ai.models_endpoint = customConfig.value.models_endpoint
+        config.value.ai.chat_endpoint = customConfig.value.chat_endpoint
+        config.value.ai.api_key = customConfig.value.api_key
+        config.value.ai.ocr_model = customConfig.value.ocr_model
+        config.value.ai.text_model = customConfig.value.text_model
+
+        console.log('恢复自定义配置:', customConfig.value)
+      } else {
+        // 如果没有真实的自定义配置，清空所有字段
+        config.value.ai.base_url = ''
+        config.value.ai.models_endpoint = '/models'
+        config.value.ai.chat_endpoint = '/chat/completions'
+        config.value.ai.api_key = ''
+        config.value.ai.ocr_model = ''
+        config.value.ai.text_model = ''
+
+        console.log('初始化空的自定义配置')
+      }
+
+      // 清空模型列表和错误信息
+      modelOptions.value = []
+      modelError.value = ''
+
+      // 强制触发响应式更新
+      nextTick(() => {
+        // 强制重新渲染表单元素
+        const baseUrlInput = document.getElementById('base-url') as HTMLInputElement
+        const apiKeyInput = document.getElementById('api-key') as HTMLInputElement
+        const ocrModelSelect = document.getElementById('ocr-model') as HTMLSelectElement
+        const textModelSelect = document.getElementById('text-model') as HTMLSelectElement
+
+        if (baseUrlInput) baseUrlInput.value = config.value.ai.base_url
+        if (apiKeyInput) apiKeyInput.value = config.value.ai.api_key
+        if (ocrModelSelect) ocrModelSelect.value = config.value.ai.ocr_model
+        if (textModelSelect) textModelSelect.value = config.value.ai.text_model
+
+        // 如果有API Key和Base URL，自动获取模型列表
+        if (config.value.ai.api_key && config.value.ai.base_url) {
+          setTimeout(() => {
+            fetchModels()
+          }, 100)
+        }
+      })
+      return
+    }
+
+    const preset = apiPresets.find(p => p.name === presetName)
+    if (preset) {
+      config.value.ai.base_url = preset.base_url
+      config.value.ai.models_endpoint = preset.models_endpoint
+      config.value.ai.chat_endpoint = preset.chat_endpoint
+
+      // 清空API Key（除非预设自带API Key）
+      if (preset.api_key) {
+        config.value.ai.api_key = preset.api_key
+      } else {
+        config.value.ai.api_key = ''
+      }
+
+      // 清空模型选择（除非预设指定默认模型）
+      if (preset.ocr_model) {
+        config.value.ai.ocr_model = preset.ocr_model
+      } else {
+        config.value.ai.ocr_model = ''
+      }
+
+      if (preset.text_model) {
+        config.value.ai.text_model = preset.text_model
+      } else {
+        config.value.ai.text_model = ''
+      }
+
+      // 清空模型列表和错误信息
+      modelOptions.value = []
+      modelError.value = ''
+
+      console.log('应用预设配置:', preset)
+
+      // 强制更新界面
+      nextTick(() => {
+        // 强制重新渲染表单元素
+        const baseUrlInput = document.getElementById('base-url') as HTMLInputElement
+        const apiKeyInput = document.getElementById('api-key') as HTMLInputElement
+        const ocrModelSelect = document.getElementById('ocr-model') as HTMLSelectElement
+        const textModelSelect = document.getElementById('text-model') as HTMLSelectElement
+
+        if (baseUrlInput) baseUrlInput.value = config.value.ai.base_url
+        if (apiKeyInput) apiKeyInput.value = config.value.ai.api_key
+        if (ocrModelSelect) ocrModelSelect.value = config.value.ai.ocr_model
+        if (textModelSelect) textModelSelect.value = config.value.ai.text_model
+
+        // 如果有API Key和Base URL，自动获取模型列表
+        if (config.value.ai.api_key && preset.base_url) {
+          setTimeout(() => {
+            fetchModels()
+          }, 100)
+        }
+      })
+    }
+  } finally {
+    // 延迟重置标记，确保配置更新完成
+    setTimeout(() => {
+      applyingPreset.value = false
+    }, 200)
   }
 }
 
@@ -377,19 +669,77 @@ const close = () => {
           <!-- AI服务配置 -->
           <section class="config-section">
             <h3>AI服务配置</h3>
-            
+
+            <!-- 预设模板选择 -->
+            <div class="form-group">
+              <label for="api-preset">API服务预设:</label>
+              <select
+                id="api-preset"
+                v-model="selectedPreset"
+                @change="applyPreset"
+                class="form-select"
+              >
+                <option value="">选择预设模板...</option>
+                <option v-for="preset in apiPresets" :key="preset.name" :value="preset.name">
+                  {{ preset.name }}
+                </option>
+              </select>
+              <small class="form-help">
+                选择常用的API服务预设，或选择"自定义配置"手动设置
+              </small>
+            </div>
+
             <div class="form-group">
               <label for="base-url">API Base URL:</label>
-              <input 
+              <input
                 id="base-url"
-                v-model="config.ai.base_url" 
-                type="url" 
+                v-model="config.ai.base_url"
+                type="url"
                 placeholder="https://api.openai.com/v1"
                 class="form-input"
               />
               <small class="form-help">
-                支持OpenAI兼容的API服务，如Azure OpenAI、本地部署等
+                API服务的基础URL，不包含具体的端点路径
               </small>
+            </div>
+
+            <!-- 端点配置 -->
+            <div class="form-row">
+              <div class="form-group">
+                <label for="models-endpoint">模型列表端点:</label>
+                <input
+                  id="models-endpoint"
+                  v-model="config.ai.models_endpoint"
+                  type="text"
+                  placeholder="/models"
+                  class="form-input"
+                />
+                <small class="form-help">获取模型列表的API端点</small>
+              </div>
+
+              <div class="form-group">
+                <label for="chat-endpoint">对话端点:</label>
+                <input
+                  id="chat-endpoint"
+                  v-model="config.ai.chat_endpoint"
+                  type="text"
+                  placeholder="/chat/completions"
+                  class="form-input"
+                />
+                <small class="form-help">发送对话请求的API端点</small>
+              </div>
+            </div>
+
+            <!-- URL预览 -->
+            <div class="url-preview">
+              <div class="preview-item">
+                <strong>模型列表URL:</strong>
+                <code>{{ config.ai.base_url }}{{ config.ai.models_endpoint || '/models' }}</code>
+              </div>
+              <div class="preview-item">
+                <strong>对话API URL:</strong>
+                <code>{{ config.ai.base_url }}{{ config.ai.chat_endpoint || '/chat/completions' }}</code>
+              </div>
             </div>
 
             <div class="form-group">
@@ -420,7 +770,6 @@ const close = () => {
                   <option v-else-if="modelOptions.length === 0" value="">请先配置API信息</option>
                   <option v-for="option in modelOptions" :key="option.value" :value="option.value">
                     {{ option.label }}
-                    <span v-if="isVisionModel(option.value)" class="model-badge">📷 视觉</span>
                   </option>
                 </select>
                 <button
@@ -435,7 +784,7 @@ const close = () => {
               </div>
               <small v-if="modelError" class="form-error">{{ modelError }}</small>
               <small v-else class="form-help">
-                用于图片OCR识别，建议选择支持视觉的模型（如GPT-4 Vision）
+                用于图片OCR识别，请选择支持视觉功能的模型
               </small>
             </div>
 
@@ -452,11 +801,10 @@ const close = () => {
                 <option v-else-if="modelOptions.length === 0" value="">请先配置API信息</option>
                 <option v-for="option in modelOptions" :key="option.value" :value="option.value">
                   {{ option.label }}
-                  <span v-if="!isVisionModel(option.value)" class="model-badge">💬 文本</span>
                 </option>
               </select>
               <small class="form-help">
-                用于AI文本处理（纠错、总结、翻译等），可选择文本专用模型以降低成本
+                用于AI文本处理（纠错、总结、翻译等）
               </small>
             </div>
 
@@ -628,7 +976,7 @@ const close = () => {
               </div>
 
               <div class="dependency-actions">
-                <button @click="loadDependencies" :disabled="loadingDependencies" class="btn btn-secondary">
+                <button @click="forceReloadDependencies" :disabled="loadingDependencies" class="btn btn-secondary">
                   {{ loadingDependencies ? '检查中...' : '重新检查' }}
                 </button>
               </div>
@@ -1073,15 +1421,7 @@ const close = () => {
   transform: translateY(-1px);
 }
 
-.model-badge {
-  font-size: 0.7rem;
-  padding: 0.1rem 0.3rem;
-  border-radius: 3px;
-  margin-left: 0.5rem;
-  font-weight: 500;
-  background: rgba(0, 123, 255, 0.1);
-  color: #007bff;
-}
+
 
 /* 依赖状态样式 */
 .dependency-status {
@@ -1232,5 +1572,38 @@ const close = () => {
 
 .no-data p {
   margin-bottom: 1rem;
+}
+
+/* URL预览样式 */
+.url-preview {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: rgba(248, 249, 250, 0.8);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.preview-item {
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.preview-item:last-child {
+  margin-bottom: 0;
+}
+
+.preview-item strong {
+  color: #333;
+  margin-right: 0.5rem;
+}
+
+.preview-item code {
+  background: rgba(33, 37, 41, 0.1);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.8rem;
+  color: #495057;
+  word-break: break-all;
 }
 </style>

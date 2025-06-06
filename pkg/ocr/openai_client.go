@@ -82,21 +82,35 @@ func (c *OpenAIClient) RecognizeImage(ctx context.Context, imagePath string) (*O
 	}
 }
 
-// isVisionModel 检查是否为视觉模型
+// isVisionModel 检查是否为视觉模型 - 使用更宽松的检测策略
 func (c *OpenAIClient) isVisionModel(model string) bool {
-	visionModels := []string{
-		"gpt-4-vision-preview",
-		"gpt-4-turbo",
-		"gpt-4o",
-		"gpt-4o-mini",
+	if model == "" {
+		return false
 	}
 
-	for _, vm := range visionModels {
-		if strings.Contains(model, vm) {
-			return true
+	lowerModel := strings.ToLower(model)
+
+	// 明确不支持视觉的模型
+	textOnlyModels := []string{
+		"gpt-3.5-turbo",
+		"gpt-3.5",
+		"text-davinci",
+		"text-curie",
+		"text-babbage",
+		"text-ada",
+	}
+
+	// 检查是否为明确的文本模型
+	for _, textModel := range textOnlyModels {
+		if strings.Contains(lowerModel, textModel) {
+			return false
 		}
 	}
-	return false
+
+	// 对于其他模型，默认假设支持视觉功能
+	// 这样可以避免误判新的视觉模型（如Gemini、Claude等）
+	// 如果模型实际不支持视觉，API会返回相应错误
+	return true
 }
 
 // recognizeWithVision 使用视觉模型识别
