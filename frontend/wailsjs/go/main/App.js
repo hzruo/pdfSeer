@@ -6,6 +6,10 @@ export function CheckProcessedPages(arg1) {
   return window['go']['main']['App']['CheckProcessedPages'](arg1);
 }
 
+export function CheckSystemDependencies() {
+  return window['go']['main']['App']['CheckSystemDependencies']();
+}
+
 export function DeleteHistoryRecord(arg1) {
   return window['go']['main']['App']['DeleteHistoryRecord'](arg1);
 }
@@ -48,6 +52,10 @@ export function GetHistoryPages(arg1) {
 
 export function GetHistoryRecords(arg1) {
   return window['go']['main']['App']['GetHistoryRecords'](arg1);
+}
+
+export function GetInstallInstructions() {
+  return window['go']['main']['App']['GetInstallInstructions']();
 }
 
 export function GetPDFPath() {

@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, onMounted, watch } from 'vue'
-import { GetConfig, UpdateConfig } from '../../wailsjs/go/main/App'
+import { GetConfig, UpdateConfig, CheckSystemDependencies, GetInstallInstructions } from '../../wailsjs/go/main/App'
 import CustomDialog from './CustomDialog.vue'
 
 // Emits
@@ -39,6 +39,11 @@ const modelOptions = ref<Array<{value: string, label: string, description?: stri
 const loadingModels = ref(false)
 const modelError = ref('')
 
+// 依赖状态
+const systemDependencies = ref<any>(null)
+const loadingDependencies = ref(false)
+const installInstructions = ref<any>(null)
+
 // 主题选项
 const themeOptions = [
   { value: 'light', label: '浅色主题' },
@@ -60,6 +65,7 @@ const dialog = ref({
 // 生命周期
 onMounted(async () => {
   await loadConfig()
+  await loadDependencies()
 })
 
 // 监听API配置变化，自动获取模型列表
@@ -319,6 +325,33 @@ const testConnection = async () => {
   }
 }
 
+// 加载依赖状态
+const loadDependencies = async () => {
+  try {
+    loadingDependencies.value = true
+
+    // 检查系统依赖
+    const deps = await CheckSystemDependencies()
+    systemDependencies.value = deps
+
+    // 获取安装说明
+    const instructions = await GetInstallInstructions()
+    installInstructions.value = instructions
+
+    console.log('依赖检查结果:', deps)
+    console.log('安装说明:', instructions)
+  } catch (error) {
+    console.error('检查依赖失败:', error)
+    showDialog({
+      title: '检查失败',
+      message: `检查系统依赖失败: ${error}`,
+      type: 'error'
+    })
+  } finally {
+    loadingDependencies.value = false
+  }
+}
+
 const close = () => {
   emit('close')
 }
@@ -549,10 +582,71 @@ const close = () => {
             </div>
           </section>
 
-          <!-- 界面配置 -->
+          <!-- 系统依赖状态 -->
+          <section class="config-section">
+            <h3>系统依赖状态</h3>
+
+            <div v-if="loadingDependencies" class="loading-state">
+              <div class="spinner"></div>
+              <p>检查系统依赖中...</p>
+            </div>
+
+            <div v-else-if="systemDependencies" class="dependency-status">
+              <div class="system-info">
+                <p><strong>系统信息:</strong> {{ systemDependencies.os }}/{{ systemDependencies.arch }}</p>
+              </div>
+
+              <div class="dependency-list">
+                <div v-for="dep in systemDependencies.dependencies" :key="dep.name" class="dependency-item">
+                  <div class="dependency-header">
+                    <span class="dependency-icon">{{ dep.installed ? '✅' : '❌' }}</span>
+                    <span class="dependency-name">{{ dep.name }}</span>
+                    <span v-if="dep.required" class="required-badge">必需</span>
+                    <span v-else class="optional-badge">可选</span>
+                  </div>
+
+                  <div class="dependency-details">
+                    <div v-if="dep.version" class="dependency-version">
+                      版本: {{ dep.version }}
+                    </div>
+                    <div class="dependency-description">
+                      {{ dep.description }}
+                    </div>
+                    <div v-if="dep.error" class="dependency-error">
+                      {{ dep.error }}
+                    </div>
+
+                    <!-- 安装说明 -->
+                    <div v-if="!dep.installed && installInstructions && installInstructions[dep.name]" class="install-instructions">
+                      <details>
+                        <summary>安装说明</summary>
+                        <pre>{{ installInstructions[dep.name] }}</pre>
+                      </details>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="dependency-actions">
+                <button @click="loadDependencies" :disabled="loadingDependencies" class="btn btn-secondary">
+                  {{ loadingDependencies ? '检查中...' : '重新检查' }}
+                </button>
+              </div>
+            </div>
+
+            <div v-else class="no-data">
+              <p>无法获取系统依赖信息</p>
+              <button @click="loadDependencies" class="btn btn-secondary">
+                重试
+              </button>
+            </div>
+          </section>
+
+          <!-- 界面配置 (暂未实现) -->
+          <!--
           <section class="config-section">
             <h3>界面配置</h3>
-            
+
             <div class="form-row">
               <div class="form-group">
                 <label for="theme">主题:</label>
@@ -565,10 +659,10 @@ const close = () => {
 
               <div class="form-group">
                 <label for="font">默认字体:</label>
-                <input 
+                <input
                   id="font"
-                  v-model="config.ui.default_font" 
-                  type="text" 
+                  v-model="config.ui.default_font"
+                  type="text"
                   placeholder="system"
                   class="form-input"
                 />
@@ -584,6 +678,7 @@ const close = () => {
               </div>
             </div>
           </section>
+          -->
         </div>
       </div>
 
@@ -785,6 +880,10 @@ const close = () => {
 }
 
 .config-section:nth-child(3) h3::before {
+  content: '🔧';
+}
+
+.config-section:nth-child(4) h3::before {
   content: '🎨';
 }
 
@@ -982,5 +1081,156 @@ const close = () => {
   font-weight: 500;
   background: rgba(0, 123, 255, 0.1);
   color: #007bff;
+}
+
+/* 依赖状态样式 */
+.dependency-status {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.system-info {
+  padding: 0.75rem;
+  background: rgba(102, 126, 234, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.system-info p {
+  margin: 0;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.dependency-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.dependency-item {
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+}
+
+.dependency-item:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(102, 126, 234, 0.3);
+  transform: translateY(-1px);
+}
+
+.dependency-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.dependency-icon {
+  font-size: 1.1rem;
+}
+
+.dependency-name {
+  font-weight: 600;
+  color: #333;
+  flex: 1;
+  font-size: 0.95rem;
+}
+
+.required-badge {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.optional-badge {
+  background: rgba(108, 117, 125, 0.1);
+  color: #6c757d;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.dependency-details {
+  margin-left: 1.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.dependency-version {
+  color: #28a745;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.dependency-description {
+  color: #666;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.dependency-error {
+  color: #dc3545;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.install-instructions {
+  margin-top: 0.5rem;
+}
+
+.install-instructions details {
+  background: rgba(248, 249, 250, 0.8);
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+
+.install-instructions summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: #007bff;
+  font-size: 0.85rem;
+  padding: 0.25rem;
+}
+
+.install-instructions summary:hover {
+  color: #0056b3;
+}
+
+.install-instructions pre {
+  margin: 0.5rem 0 0 0;
+  padding: 0.75rem;
+  background: rgba(33, 37, 41, 0.95);
+  color: #f8f9fa;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.dependency-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}
+
+.no-data {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+}
+
+.no-data p {
+  margin-bottom: 1rem;
 }
 </style>

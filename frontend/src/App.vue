@@ -6,7 +6,7 @@ import HistoryPanel from './components/HistoryPanel.vue'
 import ProgressPanel from './components/ProgressPanel.vue'
 import ErrorHandler from './components/ErrorHandler.vue'
 import TextEditor from './components/TextEditor.vue'
-import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion } from '../wailsjs/go/main/App'
+import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion, CheckSystemDependencies, GetInstallInstructions } from '../wailsjs/go/main/App'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from 'docx'
 
@@ -21,6 +21,8 @@ const showTextEditor = ref(false)
 const editingPageNumber = ref(0)
 const processing = ref(false)
 const appVersionInfo = ref<any>(null)
+const systemDependencies = ref<any>(null)
+const showDependencyWarning = ref(false)
 
 // 编辑器拖拽相关状态
 const editorPosition = ref({ x: 50, y: 50 }) // 更靠近左上角，避免遮挡太多内容
@@ -73,6 +75,17 @@ onMounted(async () => {
   }
 
   // 监听事件
+  EventsOn('dependency-check', (data: any) => {
+    systemDependencies.value = data
+    console.log('系统依赖检查结果:', data)
+
+    // 检查是否有必需依赖缺失
+    const missingRequired = data.dependencies?.some((dep: any) => dep.required && !dep.installed)
+    if (missingRequired) {
+      showDependencyWarning.value = true
+    }
+  })
+
   EventsOn('document-loaded', (data: any) => {
     // 重置页面选择状态（防止不同文档间的状态混乱）
     selectedPages.value = []

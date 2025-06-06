@@ -17,6 +17,7 @@ import (
 	"pdf-ocr-ai/pkg/history"
 	"pdf-ocr-ai/pkg/ocr"
 	"pdf-ocr-ai/pkg/pdf"
+	"pdf-ocr-ai/pkg/system"
 )
 
 // ProgressUpdate 进度更新
@@ -51,6 +52,15 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	fmt.Printf("[DEBUG] startup 方法被调用\n")
 	a.ctx = ctx
+
+	// 检查系统依赖
+	fmt.Printf("[DEBUG] 检查系统依赖\n")
+	sysInfo := system.CheckDependencies()
+	dependencyReport := system.FormatDependencyReport(sysInfo)
+	fmt.Printf("[INFO] 系统依赖检查结果:\n%s", dependencyReport)
+
+	// 发送依赖检查结果到前端
+	runtime.EventsEmit(ctx, "dependency-check", sysInfo)
 
 	// 初始化各个组件
 	if err := a.initializeComponents(); err != nil {
@@ -1080,6 +1090,16 @@ func (a *App) GetSupportedFormats() []string {
 // GetAppVersion 获取应用版本信息
 func (a *App) GetAppVersion() map[string]string {
 	return GetAppInfo()
+}
+
+// CheckSystemDependencies 检查系统依赖
+func (a *App) CheckSystemDependencies() *system.SystemInfo {
+	return system.CheckDependencies()
+}
+
+// GetInstallInstructions 获取依赖安装说明
+func (a *App) GetInstallInstructions() map[string]string {
+	return system.GetInstallInstructions()
 }
 
 // GetDocumentInfo 获取文档信息
