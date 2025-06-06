@@ -9,5 +9,12 @@
   "author": {
     "name": "hzruo",
     "email": "hzruo@outlook.com"
+  },
+  "info": {
+    "companyName": "hzruo",
+    "productName": "识文君",
+    "productVersion": "1.0.0",
+    "copyright": "© 2025 识文君 PDF智能助手",
+    "comments": "基于AI的PDF文档处理工具"
   }
 }

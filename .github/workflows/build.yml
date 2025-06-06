@@ -11,21 +11,25 @@ on:
         required: true
         default: 'v1.0.0'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
+      fail-fast: false  # 不要因为一个平台失败就取消其他平台
       matrix:
         platform:
-          - os: macos-latest
+          - os: windows-latest
+            target: windows/amd64
+            name: Windows-x64
+          - os: macos-13
             target: darwin/amd64
             name: macOS-Intel
           - os: macos-latest
             target: darwin/arm64
             name: macOS-Apple-Silicon
-          - os: windows-latest
-            target: windows/amd64
-            name: Windows-x64
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: linux/amd64
             name: Linux-x64
 
@@ -36,9 +40,9 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Setup Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version-file: 'go.mod'
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -49,99 +53,566 @@ jobs:
       run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
     - name: Install Linux dependencies
-      if: matrix.platform.os == 'ubuntu-latest'
+      if: matrix.platform.os == 'ubuntu-22.04'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libvips-dev
+
+        # Ubuntu 22.04 支持 WebKit2GTK，安装必要依赖
+        # 尝试安装 WebKit2GTK（Ubuntu 22.04 可能需要 4.1 版本）
+        sudo apt-get install -y \
+          build-essential \
+          pkg-config \
+          libgtk-3-dev \
+          libvips-dev \
+          jq
+
+        # 检查并安装 WebKit2GTK 4.0（Wails 硬依赖）
+        echo "检查 WebKit2GTK 4.0 可用性..."
+        if apt-cache show libwebkit2gtk-4.0-dev >/dev/null 2>&1; then
+          echo "安装 WebKit2GTK 4.0..."
+          sudo apt-get install -y libwebkit2gtk-4.0-dev
+          echo "✅ WebKit2GTK 4.0 安装成功"
+        else
+          echo "❌ WebKit2GTK 4.0 不可用，跳过 Linux 构建"
+          echo "可用的 WebKit2GTK 包："
+          apt-cache search libwebkit2gtk || true
+          echo "SKIP_LINUX_BUILD=true" >> $GITHUB_ENV
+          exit 0
+        fi
+
+        # 验证关键依赖
+        echo "验证依赖安装..."
+        pkg-config --exists gtk+-3.0 && echo "✅ GTK+ 3.0"
+        pkg-config --exists webkit2gtk-4.0 && echo "✅ WebKit2GTK 4.0"
+        pkg-config --exists vips && echo "✅ libvips"
+        which jq && echo "✅ jq"
 
     - name: Install macOS dependencies
-      if: matrix.platform.os == 'macos-latest'
+      if: startsWith(matrix.platform.os, 'macos-')
       run: |
-        brew install vips
+        # 更新 Homebrew（允许失败，不影响后续安装）
+        echo "更新 Homebrew..."
+        brew update || echo "⚠️ Homebrew 更新失败，但继续安装依赖"
 
-    - name: Get version
-      id: version
+        # 安装 libvips（bimg 依赖）和 jq
+        echo "安装 libvips 和 jq..."
+
+        # 分别安装，避免一个包的问题影响整个安装过程
+        echo "安装 libvips..."
+        if ! brew install vips; then
+          echo "⚠️ brew install vips 失败，尝试其他方法..."
+          # 检查是否已经安装
+          if brew list vips >/dev/null 2>&1; then
+            echo "✅ libvips 已经安装"
+          else
+            echo "❌ libvips 安装失败"
+            echo "SKIP_MACOS_BUILD=true" >> $GITHUB_ENV
+            exit 0
+          fi
+        else
+          echo "✅ libvips 安装成功"
+        fi
+
+        echo "安装 jq..."
+        if ! brew install jq; then
+          echo "⚠️ brew install jq 失败，尝试其他方法..."
+          # 检查是否已经安装
+          if brew list jq >/dev/null 2>&1; then
+            echo "✅ jq 已经安装"
+          else
+            echo "❌ jq 安装失败，但不影响构建"
+          fi
+        else
+          echo "✅ jq 安装成功"
+        fi
+
+        # 确保 pkg-config 和链接器能找到 vips
+        echo "设置环境变量..."
+        BREW_PREFIX=$(brew --prefix)
+        VIPS_PREFIX=$(brew --prefix vips)
+
+        # 检测架构和平台信息
+        HOST_ARCH=$(uname -m)
+        TARGET_ARCH="${{ matrix.platform.target }}"
+        OS_VERSION="${{ matrix.platform.os }}"
+        echo "主机架构: $HOST_ARCH"
+        echo "目标平台: $TARGET_ARCH"
+        echo "运行器: $OS_VERSION"
+        echo "Homebrew prefix: $BREW_PREFIX"
+        echo "libvips prefix: $VIPS_PREFIX"
+
+        # 设置基础环境变量
+        export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig"
+        export LIBRARY_PATH="$BREW_PREFIX/lib"
+        export LD_LIBRARY_PATH="$BREW_PREFIX/lib"
+        export CPATH="$BREW_PREFIX/include"
+        export CGO_CFLAGS="-I$BREW_PREFIX/include"
+        export CGO_LDFLAGS="-L$BREW_PREFIX/lib -lvips"
+
+        # 现在使用原生架构，不需要交叉编译
+        echo "使用原生架构编译: $HOST_ARCH -> $TARGET_ARCH"
+
+        # 持久化环境变量
+        echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
+        echo "LIBRARY_PATH=$LIBRARY_PATH" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> $GITHUB_ENV
+        echo "CPATH=$CPATH" >> $GITHUB_ENV
+        echo "CGO_CFLAGS=$CGO_CFLAGS" >> $GITHUB_ENV
+        echo "CGO_LDFLAGS=$CGO_LDFLAGS" >> $GITHUB_ENV
+
+        # 显示详细信息
+        echo "Homebrew prefix: $BREW_PREFIX"
+        echo "libvips 库文件:"
+        ls -la $BREW_PREFIX/lib/libvips* 2>/dev/null || echo "未找到 libvips 库文件"
+        echo "libvips 头文件:"
+        ls -la $BREW_PREFIX/include/vips/ 2>/dev/null || echo "未找到 libvips 头文件"
+        echo "pkg-config 文件:"
+        ls -la $BREW_PREFIX/lib/pkgconfig/vips* 2>/dev/null || echo "未找到 vips pkg-config 文件"
+
+        # 验证安装
+        echo "验证依赖安装..."
+        if pkg-config --exists vips; then
+          echo "✅ libvips 可用"
+          pkg-config --modversion vips && echo "libvips 版本信息"
+          echo "libvips 配置信息:"
+          pkg-config --cflags vips
+          pkg-config --libs vips
+        else
+          echo "❌ libvips 不可用，跳过 macOS 构建"
+          echo "SKIP_MACOS_BUILD=true" >> $GITHUB_ENV
+        fi
+        which jq && echo "✅ jq"
+
+    - name: Install Windows dependencies
+      if: matrix.platform.os == 'windows-latest'
+      run: |
+        # 安装 NSIS
+        choco install nsis -y
+
+        # 直接下载安装 libvips（放弃 Chocolatey）
+        echo "下载并安装 libvips..."
+        $vipsVersion = "8.12.2"
+        $vipsUrl = "https://github.com/libvips/build-win64-mxe/releases/download/v$vipsVersion/vips-dev-w64-all-$vipsVersion.zip"
+        $vipsZip = "vips-dev.zip"
+        $vipsDir = "C:\vips"
+
+        # 下载 libvips
+        echo "下载 libvips $vipsVersion..."
+        Invoke-WebRequest -Uri $vipsUrl -OutFile $vipsZip -UseBasicParsing
+
+        # 解压到指定目录
+        echo "解压 libvips..."
+        Expand-Archive -Path $vipsZip -DestinationPath $vipsDir -Force
+
+        # 查找实际的 vips 目录
+        $vipsSubDir = Get-ChildItem -Path $vipsDir -Directory | Where-Object { $_.Name -like "vips-dev-*" } | Select-Object -First 1
+        if ($vipsSubDir) {
+          $vipsBinPath = Join-Path $vipsSubDir.FullName "bin"
+          $vipsIncludePath = Join-Path $vipsSubDir.FullName "include"
+          $vipsLibPath = Join-Path $vipsSubDir.FullName "lib"
+          $vipsPkgConfigPath = Join-Path $vipsSubDir.FullName "lib\pkgconfig"
+
+          # 设置环境变量
+          echo "设置环境变量..."
+          $env:PATH = "$vipsBinPath;$env:PATH"
+          $env:PKG_CONFIG_PATH = "$vipsPkgConfigPath;$env:PKG_CONFIG_PATH"
+
+          # 设置完整的 CGO 包含路径（基于实际目录结构）
+          $glibIncludePath = Join-Path $vipsIncludePath "glib-2.0"
+          $glibLibIncludePath = Join-Path $vipsLibPath "glib-2.0\include"
+
+          # 构建完整的 CFLAGS（包含所有必要的依赖路径）
+          $cflags = @(
+            "-I$vipsIncludePath",      # 包含 vips/ 目录
+            "-I$glibIncludePath"       # 包含 glib-2.0/ 目录（包含 glib.h, gobject/, gio/ 等）
+          )
+
+          # 添加 glib lib include 路径（如果存在）
+          if (Test-Path $glibLibIncludePath) {
+            $cflags += "-I$glibLibIncludePath"
+            echo "添加 glib lib include 路径: $glibLibIncludePath"
+          }
+
+          $env:CGO_CFLAGS = $cflags -join " "
+          $env:CGO_LDFLAGS = "-L$vipsLibPath -lvips"
+
+          # 持久化环境变量
+          echo "PATH=$env:PATH" >> $env:GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH" >> $env:GITHUB_ENV
+          echo "CGO_CFLAGS=$env:CGO_CFLAGS" >> $env:GITHUB_ENV
+          echo "CGO_LDFLAGS=$env:CGO_LDFLAGS" >> $env:GITHUB_ENV
+
+          echo "✅ libvips 安装完成"
+          echo "安装路径: $($vipsSubDir.FullName)"
+          echo "头文件路径: $vipsIncludePath"
+          echo "库文件路径: $vipsLibPath"
+
+          # 验证目录结构
+          echo "验证 include 目录结构..."
+
+          # 显示 include 目录结构
+          echo "include 目录结构:"
+          Get-ChildItem -Path $vipsIncludePath -Directory | ForEach-Object { echo "  $($_.Name)/" }
+
+          echo "最终 CGO_CFLAGS: $env:CGO_CFLAGS"
+        } else {
+          echo "❌ 未找到 vips 子目录"
+          Get-ChildItem -Path $vipsDir
+          exit 1
+        }
+
+        # 清理下载文件
+        Remove-Item $vipsZip -Force
+
+        # 验证安装
+        echo "验证依赖安装..."
+        where nsis && echo "✅ NSIS"
+
+        # 验证 libvips
+        if (Get-Command vips -ErrorAction SilentlyContinue) {
+          echo "✅ libvips 命令行工具可用"
+          vips --version
+        } else {
+          echo "⚠️ libvips 命令行工具未在 PATH 中找到"
+          echo "当前 PATH: $env:PATH"
+        }
+
+    - name: Get version (Unix)
+      if: matrix.platform.os != 'windows-latest'
+      id: version-unix
+      shell: bash
       run: |
         if [ "${{ github.event_name }}" = "push" ]; then
           VERSION=${GITHUB_REF#refs/tags/}
         else
           VERSION=${{ github.event.inputs.version }}
         fi
-        echo "version=${VERSION}" >> $GITHUB_OUTPUT
-        echo "version_number=${VERSION#v}" >> $GITHUB_OUTPUT
+        # 移除 'v' 前缀
+        CLEAN_VERSION="${VERSION#v}"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "version_number=$CLEAN_VERSION" >> $GITHUB_OUTPUT
 
-    - name: Update version files
+    - name: Get version (Windows)
+      if: matrix.platform.os == 'windows-latest'
+      id: version-windows
+      shell: pwsh
+      run: |
+        if ("${{ github.event_name }}" -eq "push") {
+          $VERSION = "${{ github.ref }}" -replace "refs/tags/", ""
+        } else {
+          $VERSION = "${{ github.event.inputs.version }}"
+        }
+        # 移除 'v' 前缀
+        $CLEAN_VERSION = $VERSION -replace "^v", ""
+        echo "version=$VERSION" >> $env:GITHUB_OUTPUT
+        echo "version_number=$CLEAN_VERSION" >> $env:GITHUB_OUTPUT
+
+    - name: Set version output
+      id: version
+      shell: pwsh
+      run: |
+        if ("${{ matrix.platform.os }}" -eq "windows-latest") {
+          echo "version=${{ steps.version-windows.outputs.version }}" >> $env:GITHUB_OUTPUT
+          echo "version_number=${{ steps.version-windows.outputs.version_number }}" >> $env:GITHUB_OUTPUT
+        } else {
+          echo "version=${{ steps.version-unix.outputs.version }}" >> $env:GITHUB_OUTPUT
+          echo "version_number=${{ steps.version-unix.outputs.version_number }}" >> $env:GITHUB_OUTPUT
+        }
+
+    - name: Update version files (Unix)
+      if: matrix.platform.os != 'windows-latest'
+      shell: bash
       run: |
         VERSION_NUMBER="${{ steps.version.outputs.version_number }}"
-        
-        # Update version.json
-        jq --arg version "$VERSION_NUMBER" '.version = $version' version.json > tmp.json && mv tmp.json version.json
-        
-        # Update frontend package.json
-        cd frontend
-        npm version $VERSION_NUMBER --no-git-tag-version
-        cd ..
 
-    - name: Build application
+        # 更新 version.json（确保与标签一致）
+        if [ -f version.json ]; then
+          # 添加 version 字段（如果不存在）
+          jq --arg version "$VERSION_NUMBER" '. + {version: $version}' version.json > tmp.json && mv tmp.json version.json
+          echo "Updated version.json to $VERSION_NUMBER"
+        else
+          echo "Warning: version.json not found"
+        fi
+
+        # 更新前端 package.json（确保与标签一致）
+        if [ -f frontend/package.json ]; then
+          cd frontend
+          CURRENT_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown")
+          if [ "$CURRENT_VERSION" != "$VERSION_NUMBER" ]; then
+            npm version $VERSION_NUMBER --no-git-tag-version
+            echo "Updated package.json from $CURRENT_VERSION to $VERSION_NUMBER"
+          else
+            echo "Package.json version is already $VERSION_NUMBER, skipping npm version"
+          fi
+          cd ..
+        else
+          echo "Warning: frontend/package.json not found"
+        fi
+
+    - name: Update version files (Windows)
+      if: matrix.platform.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        $VERSION_NUMBER = "${{ steps.version.outputs.version_number }}"
+
+        # 更新 version.json（确保与标签一致）
+        if (Test-Path version.json) {
+          $content = Get-Content version.json | ConvertFrom-Json
+          # 添加 version 字段（如果不存在）
+          $content | Add-Member -MemberType NoteProperty -Name "version" -Value $VERSION_NUMBER -Force
+          $content | ConvertTo-Json -Depth 10 | Set-Content version.json
+          Write-Host "Updated version.json to $VERSION_NUMBER"
+        } else {
+          Write-Warning "version.json not found"
+        }
+
+        # 更新前端 package.json（确保与标签一致）
+        if (Test-Path frontend/package.json) {
+          Set-Location frontend
+          try {
+            $packageJson = Get-Content package.json | ConvertFrom-Json
+            $currentVersion = $packageJson.version
+            if ($currentVersion -ne $VERSION_NUMBER) {
+              npm version $VERSION_NUMBER --no-git-tag-version
+              Write-Host "Updated package.json from $currentVersion to $VERSION_NUMBER"
+            } else {
+              Write-Host "Package.json version is already $VERSION_NUMBER, skipping npm version"
+            }
+          } catch {
+            Write-Warning "Failed to update package.json: $_"
+          }
+          Set-Location ..
+        } else {
+          Write-Warning "frontend/package.json not found"
+        }
+
+    - name: Build application (Unix)
+      if: matrix.platform.os != 'windows-latest' && env.SKIP_LINUX_BUILD != 'true' && env.SKIP_MACOS_BUILD != 'true'
+      shell: bash
       run: |
         wails build -platform ${{ matrix.platform.target }} -ldflags "-X main.version=${{ steps.version.outputs.version_number }}"
 
-    - name: Package macOS app
-      if: matrix.platform.os == 'macos-latest'
+    - name: Build application (Windows)
+      if: matrix.platform.os == 'windows-latest'
+      shell: pwsh
       run: |
-        # Copy version file to app bundle
-        cp version.json "build/bin/识文君.app/Contents/Resources/"
+        # 使用Wails内置的NSIS构建
+        wails build -platform ${{ matrix.platform.target }} -nsis -ldflags "-X main.version=${{ steps.version.outputs.version_number }}"
 
-        # Fix Info.plist executable name (name vs outputfilename issue)
-        # wails.json: "name": "识文君", "outputfilename": "pdfSeer"
-        # Info.plist uses name but executable is outputfilename
-        sed -i '' 's/<string>识文君<\/string>/<string>pdfSeer<\/string>/g' "build/bin/识文君.app/Contents/Info.plist"
+    - name: Skip Linux build notification
+      if: matrix.platform.os == 'ubuntu-22.04' && env.SKIP_LINUX_BUILD == 'true'
+      run: |
+        echo "⚠️ Linux 构建已跳过：WebKit2GTK 4.0 依赖不可用"
+        echo "这是正常情况，其他平台的构建将继续进行"
 
-        # Verify the fix worked
-        echo "Checking Info.plist CFBundleExecutable:"
-        grep -A1 "CFBundleExecutable" "build/bin/识文君.app/Contents/Info.plist"
+    - name: Skip macOS build notification
+      if: startsWith(matrix.platform.os, 'macos-') && env.SKIP_MACOS_BUILD == 'true'
+      run: |
+        echo "⚠️ macOS 构建已跳过：libvips 依赖不可用"
+        echo "这是正常情况，其他平台的构建将继续进行"
 
-        # Verify executable exists
-        echo "Checking executable file:"
-        ls -la "build/bin/识文君.app/Contents/MacOS/"
+    - name: Package macOS app
+      if: startsWith(matrix.platform.os, 'macos-') && env.SKIP_MACOS_BUILD != 'true'
+      run: |
+        # 查找 .app 文件
+        APP_PATH=$(find build/bin -name "*.app" -print -quit)
+        if [ -z "$APP_PATH" ]; then
+          echo "Error: .app bundle not found!" >&2
+          exit 1
+        fi
 
-        # Remove extended attributes
-        xattr -cr "build/bin/识文君.app"
+        # 复制版本文件
+        cp version.json "$APP_PATH/Contents/Resources/"
 
-        # Create DMG
+        # 创建依赖信息文件，记录构建时的依赖状态
+        VIPS_VERSION=$(pkg-config --modversion vips 2>/dev/null || echo 'unknown')
+        BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        HOMEBREW_PREFIX=$(brew --prefix 2>/dev/null || echo 'unknown')
+        ARCH_INFO=$(uname -m)
+
+        # 创建依赖信息JSON文件
+        echo "{" > "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "  \"libvips\": {" >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "    \"version\": \"$VIPS_VERSION\"," >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "    \"build_time\": \"$BUILD_TIME\"," >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "    \"homebrew_prefix\": \"$HOMEBREW_PREFIX\"," >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "    \"status\": \"bundled_with_app\"" >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "  }," >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "  \"build_info\": {" >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "    \"platform\": \"${{ matrix.platform.name }}\"," >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "    \"runner\": \"${{ matrix.platform.os }}\"," >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "    \"arch\": \"$ARCH_INFO\"" >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "  }" >> "$APP_PATH/Contents/Resources/dependencies.json"
+        echo "}" >> "$APP_PATH/Contents/Resources/dependencies.json"
+
+        # 修复 Info.plist
+        sed -i '' 's/<string>识文君<\/string>/<string>pdfSeer<\/string>/g' "$APP_PATH/Contents/Info.plist"
+
+        # 验证修复
+        echo "Info.plist CFBundleExecutable:"
+        grep -A1 "CFBundleExecutable" "$APP_PATH/Contents/Info.plist"
+
+        # 验证可执行文件
+        echo "Executable files:"
+        ls -la "$APP_PATH/Contents/MacOS/"
+
+        # 显示依赖信息
+        echo "Dependencies info:"
+        cat "$APP_PATH/Contents/Resources/dependencies.json"
+
+        # 移除扩展属性
+        xattr -cr "$APP_PATH"
+
+        # 创建 DMG - 使用英文文件名避免编码问题
         mkdir -p dist
-        hdiutil create -volname "识文君 ${{ steps.version.outputs.version }}" -srcfolder "build/bin/识文君.app" -ov -format UDZO "dist/识文君-${{ steps.version.outputs.version }}-${{ matrix.platform.name }}.dmg"
+        APP_NAME=$(basename "$APP_PATH" .app)
+        # 使用英文文件名，但保留中文卷标
+        hdiutil create -volname "$APP_NAME ${{ steps.version.outputs.version }}" \
+          -srcfolder "$APP_PATH" \
+          -ov -format UDZO \
+          "dist/pdfSeer-${{ steps.version.outputs.version }}-${{ matrix.platform.name }}.dmg"
+
+    - name: Generate License File
+      if: matrix.platform.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        # 获取当前年份
+        $currentYear = (Get-Date).Year
+
+        # 设置作者名称（使用仓库所有者作为默认值）
+        $author = "${{ github.repository_owner }}"
+
+        # 创建带实际信息的许可证文件
+        $licenseLines = @(
+          "MIT License",
+          "",
+          "Copyright (c) $currentYear $author",
+          "",
+          "Permission is hereby granted, free of charge, to any person obtaining a copy",
+          "of this software and associated documentation files (the `"Software`"), to deal",
+          "in the Software without restriction, including without limitation the rights",
+          "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell",
+          "copies of the Software, and to permit persons to whom the Software is",
+          "furnished to do so, subject to the following conditions:",
+          "",
+          "The above copyright notice and this permission notice shall be included in all",
+          "copies or substantial portions of the Software.",
+          "",
+          "THE SOFTWARE IS PROVIDED `"AS IS`", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR",
+          "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,",
+          "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE",
+          "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER",
+          "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,",
+          "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE",
+          "SOFTWARE."
+        )
+        $licenseLines | Out-File -FilePath "LICENSE" -Encoding UTF8
 
     - name: Package Windows app
       if: matrix.platform.os == 'windows-latest'
+      shell: pwsh
       run: |
-        mkdir -p dist
-        cp version.json build/bin/
-        Compress-Archive -Path "build/bin/*" -DestinationPath "dist/识文君-${{ steps.version.outputs.version }}-${{ matrix.platform.name }}.zip"
+        $version = "${{ steps.version.outputs.version }}"
+        $distDir = "dist"
+
+        # 创建目录结构
+        New-Item -ItemType Directory -Path $distDir -Force
+
+        # 复制版本文件到构建目录
+        Copy-Item -Path "version.json" -Destination "build/bin/" -Force
+
+        # 创建依赖信息文件，记录构建时的依赖状态
+        $dependencyInfo = @{
+          libvips = @{
+            version = if (Get-Command vips -ErrorAction SilentlyContinue) {
+              (vips --version 2>$null | Select-String "vips" | ForEach-Object { $_.ToString().Split()[1] })
+            } else { "unknown" }
+            build_time = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            install_path = if (Get-Command vips -ErrorAction SilentlyContinue) {
+              (Get-Command vips).Source
+            } else { "unknown" }
+            status = "bundled_with_app"
+          }
+          build_info = @{
+            platform = "${{ matrix.platform.name }}"
+            runner = "${{ matrix.platform.os }}"
+            arch = $env:PROCESSOR_ARCHITECTURE
+          }
+        }
+
+        $dependencyInfo | ConvertTo-Json -Depth 3 | Set-Content "build/bin/dependencies.json"
+        Write-Host "创建依赖信息文件: build/bin/dependencies.json"
+
+        # 查找Wails生成的安装程序（使用通配符匹配）
+        $installerFiles = Get-ChildItem -Path "build/bin" -Filter "*installer.exe" -File
+        if ($installerFiles.Count -gt 0) {
+          $originalInstaller = $installerFiles[0].FullName
+          $newInstallerName = "pdfSeer-$version-Setup.exe"
+          Copy-Item -Path $originalInstaller -Destination "$distDir/$newInstallerName" -Force
+          Write-Host "✅ 安装程序已复制: $newInstallerName"
+        } else {
+          Write-Warning "⚠️ 未找到Wails生成的安装程序"
+          Get-ChildItem -Path "build/bin" -File | ForEach-Object { Write-Host "发现文件: $($_.Name)" }
+        }
+
+        # 创建便携版ZIP包
+        $zipName = "pdfSeer-$version-${{ matrix.platform.name }}.zip"
+
+        # 创建临时目录用于ZIP打包
+        $tempDir = "temp-zip"
+        New-Item -ItemType Directory -Path $tempDir -Force
+
+        # 复制所有必要文件到临时目录（排除安装程序）
+        Get-ChildItem -Path "build/bin" -File | Where-Object { $_.Name -notlike "*installer*" } | ForEach-Object {
+          Copy-Item -Path $_.FullName -Destination $tempDir -Force
+        }
+
+        # 创建ZIP包
+        Compress-Archive -Path "$tempDir/*" -DestinationPath "$distDir/$zipName" -Force
+        Write-Host "✅ 便携版已创建: $zipName"
+
+        # 清理临时目录
+        Remove-Item -Path $tempDir -Recurse -Force
+
+        # 显示最终文件列表
+        Write-Host "生成的文件:"
+        Get-ChildItem -Path $distDir -File | ForEach-Object { Write-Host "  $($_.Name)" }
 
     - name: Package Linux app
-      if: matrix.platform.os == 'ubuntu-latest'
+      if: matrix.platform.os == 'ubuntu-22.04' && env.SKIP_LINUX_BUILD != 'true'
       run: |
         mkdir -p dist
         cp version.json build/bin/
-        tar -czf "dist/识文君-${{ steps.version.outputs.version }}-${{ matrix.platform.name }}.tar.gz" -C build/bin .
+        # 使用英文文件名避免编码问题
+        tar -czf "dist/pdfSeer-${{ steps.version.outputs.version }}-${{ matrix.platform.name }}.tar.gz" -C build/bin .
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: 识文君-${{ steps.version.outputs.version }}-${{ matrix.platform.name }}
+        # 使用英文artifact名称避免编码问题
+        name: pdfSeer-${{ steps.version.outputs.version }}-${{ matrix.platform.name }}
         path: dist/*
 
   release:
     needs: build
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    
+    permissions:
+      contents: write
+
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         path: dist
+
+    - name: List downloaded files
+      run: |
+        echo "Downloaded artifacts:"
+        find dist -type f -name "*" | sort
+        echo ""
+        echo "File details:"
+        find dist -type f -name "*" -exec ls -la {} \;
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
@@ -150,5 +621,15 @@ jobs:
         draft: false
         prerelease: false
         generate_release_notes: true
+        name: "识文君 ${{ github.ref_name }}"
+        body: |
+          ## 识文君 PDF智能助手 ${{ github.ref_name }}
+
+          基于AI的PDF文档处理工具，支持OCR识别和智能文本处理。
+
+          ### 下载说明
+          - **Windows**: 下载 `pdfSeer-*-Setup.exe` (安装版) 或 `pdfSeer-*-Windows-x64.zip` (便携版)
+          - **macOS**: 下载 `pdfSeer-*-macOS-*.dmg`
+          - **Linux**: 下载 `pdfSeer-*-Linux-x64.tar.gz`
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

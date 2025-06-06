@@ -25,7 +25,7 @@ const systemDependencies = ref<any>(null)
 const showDependencyWarning = ref(false)
 
 // 编辑器拖拽相关状态
-const editorPosition = ref({ x: 50, y: 50 }) // 更靠近左上角，避免遮挡太多内容
+const editorPosition = ref({ x: 0, y: 0 }) // 初始位置，将在显示时计算居中位置
 const editorSize = ref({ width: 800, height: 600 })
 const editorDragging = ref(false)
 const editorDragOffset = ref({ x: 0, y: 0 })
@@ -299,6 +299,8 @@ const formatPageList = (pages: number[] | undefined) => {
 
 const handleEditPage = (pageNumber: number) => {
   editingPageNumber.value = pageNumber
+  // 计算居中位置
+  centerEditor()
   showTextEditor.value = true
 }
 
@@ -359,6 +361,19 @@ const toggleConfig = () => {
 
 const toggleHistory = () => {
   showHistory.value = !showHistory.value
+}
+
+// 计算编辑器居中位置
+const centerEditor = () => {
+  const windowWidth = window.innerWidth
+  const windowHeight = window.innerHeight
+  const editorWidth = editorSize.value.width
+  const editorHeight = editorSize.value.height
+
+  editorPosition.value = {
+    x: Math.max(0, (windowWidth - editorWidth) / 2),
+    y: Math.max(0, (windowHeight - editorHeight) / 2)
+  }
 }
 
 const closeTextEditor = () => {

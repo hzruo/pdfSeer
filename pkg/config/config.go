@@ -24,19 +24,25 @@ type AIConfig struct {
 	RetryDelay      int     `json:"retry_delay"`      // 重试延迟（秒）
 }
 
+// StorageConfig 存储配置
+type StorageConfig struct {
+	CacheTTL        string `json:"cache_ttl"`
+	MaxCacheSize    string `json:"max_cache_size"`
+	HistoryRetention string `json:"history_retention"`
+}
+
+// UIConfig 界面配置
+type UIConfig struct {
+	Theme       string `json:"theme"`
+	DefaultFont string `json:"default_font"`
+	Layout      string `json:"layout"`
+}
+
 // AppConfig 应用配置
 type AppConfig struct {
-	AI      AIConfig `json:"ai"`
-	Storage struct {
-		CacheTTL        string `json:"cache_ttl"`
-		MaxCacheSize    string `json:"max_cache_size"`
-		HistoryRetention string `json:"history_retention"`
-	} `json:"storage"`
-	UI struct {
-		Theme       string `json:"theme"`
-		DefaultFont string `json:"default_font"`
-		Layout      string `json:"layout"`
-	} `json:"ui"`
+	AI      AIConfig      `json:"ai"`
+	Storage StorageConfig `json:"storage"`
+	UI      UIConfig      `json:"ui"`
 }
 
 // ConfigManager 配置管理器
@@ -92,13 +98,17 @@ func (cm *ConfigManager) Load() error {
 			MaxRetries:      3,  // 默认重试3次
 			RetryDelay:      1,  // 默认延迟1秒
 		},
+		Storage: StorageConfig{
+			CacheTTL:        "24h",
+			MaxCacheSize:    "2GB",
+			HistoryRetention: "30d",
+		},
+		UI: UIConfig{
+			Theme:       "light",
+			DefaultFont: "system",
+			Layout:      "split",
+		},
 	}
-	cm.config.Storage.CacheTTL = "24h"
-	cm.config.Storage.MaxCacheSize = "2GB"
-	cm.config.Storage.HistoryRetention = "30d"
-	cm.config.UI.Theme = "light"
-	cm.config.UI.DefaultFont = "system"
-	cm.config.UI.Layout = "split"
 
 	// 尝试从文件加载
 	if data, err := os.ReadFile(cm.configPath); err == nil {

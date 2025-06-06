@@ -56,9 +56,23 @@ const saveExportFormat = (format: string) => {
   localStorage.setItem('textEditor_exportFormat', format)
 }
 
-// 组件挂载时加载上次的导出格式
+// 计算居中位置
+const centerWindow = () => {
+  const windowWidth = window.innerWidth
+  const windowHeight = window.innerHeight
+  const modalWidth = size.value.width
+  const modalHeight = size.value.height
+
+  position.value = {
+    x: Math.max(0, (windowWidth - modalWidth) / 2),
+    y: Math.max(0, (windowHeight - modalHeight) / 2)
+  }
+}
+
+// 组件挂载时加载上次的导出格式并居中显示
 onMounted(() => {
   loadLastExportFormat()
+  centerWindow()
 })
 
 // 监听导出格式变化，实时保存

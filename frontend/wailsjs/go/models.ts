@@ -34,12 +34,42 @@ export namespace config {
 	        this.retry_delay = source["retry_delay"];
 	    }
 	}
+	export class UIConfig {
+	    theme: string;
+	    default_font: string;
+	    layout: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UIConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.theme = source["theme"];
+	        this.default_font = source["default_font"];
+	        this.layout = source["layout"];
+	    }
+	}
+	export class StorageConfig {
+	    cache_ttl: string;
+	    max_cache_size: string;
+	    history_retention: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StorageConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cache_ttl = source["cache_ttl"];
+	        this.max_cache_size = source["max_cache_size"];
+	        this.history_retention = source["history_retention"];
+	    }
+	}
 	export class AppConfig {
 	    ai: AIConfig;
-	    // Go type: struct { CacheTTL string "json:\"cache_ttl\""; MaxCacheSize string "json:\"max_cache_size\""; HistoryRetention string "json:\"history_retention\"" }
-	    storage: any;
-	    // Go type: struct { Theme string "json:\"theme\""; DefaultFont string "json:\"default_font\""; Layout string "json:\"layout\"" }
-	    ui: any;
+	    storage: StorageConfig;
+	    ui: UIConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppConfig(source);
@@ -48,8 +78,8 @@ export namespace config {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ai = this.convertValues(source["ai"], AIConfig);
-	        this.storage = this.convertValues(source["storage"], Object);
-	        this.ui = this.convertValues(source["ui"], Object);
+	        this.storage = this.convertValues(source["storage"], StorageConfig);
+	        this.ui = this.convertValues(source["ui"], UIConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -70,6 +100,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 
 }
 

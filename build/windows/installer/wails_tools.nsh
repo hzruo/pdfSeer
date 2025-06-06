@@ -20,10 +20,10 @@
     !define INFO_COPYRIGHT "{{.Info.Copyright}}"
 !endif
 !ifndef PRODUCT_EXECUTABLE
-    !define PRODUCT_EXECUTABLE "${INFO_PROJECTNAME}.exe"
+    !define PRODUCT_EXECUTABLE "pdfSeer.exe"
 !endif
 !ifndef UNINST_KEY_NAME
-    !define UNINST_KEY_NAME "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
+    !define UNINST_KEY_NAME "pdfSeer"
 !endif
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINST_KEY_NAME}"
 
@@ -57,11 +57,11 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 
 !macro wails.checkArchitecture
     !ifndef WAILS_WIN10_REQUIRED
-        !define WAILS_WIN10_REQUIRED "This product is only supported on Windows 10 (Server 2016) and later."
+        !define WAILS_WIN10_REQUIRED "此产品仅支持 Windows 10 (Server 2016) 及更高版本。"
     !endif
 
     !ifndef WAILS_ARCHITECTURE_NOT_SUPPORTED
-        !define WAILS_ARCHITECTURE_NOT_SUPPORTED "This product can't be installed on the current Windows architecture. Supports: ${ARCH}"
+        !define WAILS_ARCHITECTURE_NOT_SUPPORTED "此产品无法在当前 Windows 架构上安装。支持的架构: ${ARCH}"
     !endif
 
     ${If} ${AtLeastWin10}
@@ -146,7 +146,7 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 # See https://docs.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution#online-only-deployment
 !macro wails.webview2runtime
     !ifndef WAILS_INSTALL_WEBVIEW_DETAILPRINT
-        !define WAILS_INSTALL_WEBVIEW_DETAILPRINT "Installing: WebView2 Runtime"
+        !define WAILS_INSTALL_WEBVIEW_DETAILPRINT "正在安装: WebView2 运行时"
     !endif
 
     SetRegView 64

@@ -11,13 +11,14 @@ import (
 var version = "1.0.0" // 默认版本，会被构建时覆盖
 
 // VersionInfo 版本信息结构
+// 注意：基本信息来自wails.json的info字段，version.json仅用于运行时的额外描述信息
 type VersionInfo struct {
-	Version     string `json:"version"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Author      string `json:"author"`
-	Email       string `json:"email"`
-	Copyright   string `json:"copyright"`
+	Version     string `json:"version"`     // 来自编译时注入 (-ldflags)
+	Name        string `json:"name"`        // 来自wails.json info.productName
+	Description string `json:"description"` // 来自version.json或wails.json info.comments
+	Author      string `json:"author"`      // 来自wails.json author.name
+	Email       string `json:"email"`       // 来自wails.json author.email
+	Copyright   string `json:"copyright"`   // 来自wails.json info.copyright
 }
 
 var appVersion *VersionInfo
@@ -60,11 +61,11 @@ func LoadVersion() (*VersionInfo, error) {
 	
 	data, err := os.ReadFile(versionFile)
 	if err != nil {
-		// 如果读取失败，返回默认版本信息
+		// 如果读取失败，返回默认版本信息（与wails.json保持一致）
 		return &VersionInfo{
 			Version:     version, // 使用编译时设置的版本
 			Name:        "识文君",
-			Description: "PDF智能助手",
+			Description: "PDF智能助手 - 基于AI的PDF文档处理工具",
 			Author:      "hzruo",
 			Email:       "hzruo@outlook.com",
 			Copyright:   "© 2025 识文君 PDF智能助手",
