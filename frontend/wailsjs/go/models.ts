@@ -4,6 +4,8 @@ export namespace config {
 	    base_url: string;
 	    api_key: string;
 	    model: string;
+	    ocr_model: string;
+	    text_model: string;
 	    timeout: number;
 	    request_interval: number;
 	    burst_limit: number;
@@ -19,6 +21,8 @@ export namespace config {
 	        this.base_url = source["base_url"];
 	        this.api_key = source["api_key"];
 	        this.model = source["model"];
+	        this.ocr_model = source["ocr_model"];
+	        this.text_model = source["text_model"];
 	        this.timeout = source["timeout"];
 	        this.request_interval = source["request_interval"];
 	        this.burst_limit = source["burst_limit"];
@@ -123,8 +127,7 @@ export namespace history {
 	    ocr_text: string;
 	    ai_processed_text: string;
 	    processing_time: number;
-	    // Go type: time
-	    created_at: any;
+	    created_at: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new HistoryPage(source);
@@ -139,26 +142,8 @@ export namespace history {
 	        this.ocr_text = source["ocr_text"];
 	        this.ai_processed_text = source["ai_processed_text"];
 	        this.processing_time = source["processing_time"];
-	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.created_at = source["created_at"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class HistoryRecord {
 	    id: number;
@@ -168,10 +153,8 @@ export namespace history {
 	    status: string;
 	    ai_model: string;
 	    cost: number;
-	    // Go type: time
-	    processed_at: any;
-	    // Go type: time
-	    completed_at?: any;
+	    processed_at: string;
+	    completed_at?: string;
 	    error_message?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -187,28 +170,10 @@ export namespace history {
 	        this.status = source["status"];
 	        this.ai_model = source["ai_model"];
 	        this.cost = source["cost"];
-	        this.processed_at = this.convertValues(source["processed_at"], null);
-	        this.completed_at = this.convertValues(source["completed_at"], null);
+	        this.processed_at = source["processed_at"];
+	        this.completed_at = source["completed_at"];
 	        this.error_message = source["error_message"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class SearchResult {
 	    history_id: number;
@@ -216,8 +181,7 @@ export namespace history {
 	    document_name: string;
 	    page_number: number;
 	    snippet: string;
-	    // Go type: time
-	    processed_at: any;
+	    processed_at: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SearchResult(source);
@@ -230,26 +194,8 @@ export namespace history {
 	        this.document_name = source["document_name"];
 	        this.page_number = source["page_number"];
 	        this.snippet = source["snippet"];
-	        this.processed_at = this.convertValues(source["processed_at"], null);
+	        this.processed_at = source["processed_at"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }

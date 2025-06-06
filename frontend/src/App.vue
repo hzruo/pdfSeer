@@ -6,7 +6,7 @@ import HistoryPanel from './components/HistoryPanel.vue'
 import ProgressPanel from './components/ProgressPanel.vue'
 import ErrorHandler from './components/ErrorHandler.vue'
 import TextEditor from './components/TextEditor.vue'
-import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog } from '../wailsjs/go/main/App'
+import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion } from '../wailsjs/go/main/App'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from 'docx'
 
@@ -20,6 +20,7 @@ const exportFormat = ref('txt')
 const showTextEditor = ref(false)
 const editingPageNumber = ref(0)
 const processing = ref(false)
+const appVersionInfo = ref<any>(null)
 
 // 编辑器拖拽相关状态
 const editorPosition = ref({ x: 50, y: 50 }) // 更靠近左上角，避免遮挡太多内容
@@ -63,8 +64,19 @@ onMounted(async () => {
     console.error('获取支持格式失败:', error)
   }
 
+  // 加载版本信息
+  try {
+    appVersionInfo.value = await GetAppVersion()
+    console.log('应用版本信息:', appVersionInfo.value)
+  } catch (error) {
+    console.error('获取版本信息失败:', error)
+  }
+
   // 监听事件
   EventsOn('document-loaded', (data: any) => {
+    // 重置页面选择状态（防止不同文档间的状态混乱）
+    selectedPages.value = []
+
     currentDocument.value = data.document
     console.log('文档已加载:', data)
   })
@@ -183,6 +195,9 @@ const hasProcessedPages = computed(() => {
 // 方法
 const handleFileSelect = async (filePath: string) => {
   try {
+    // 重置页面选择状态
+    selectedPages.value = []
+
     await LoadDocument(filePath)
   } catch (error) {
     console.error('加载文档失败:', error)
@@ -296,6 +311,29 @@ const handlePageRendered = async (pageNumber: number) => {
     if (refreshedDoc) {
       currentDocument.value = refreshedDoc
       console.log(`文档数据已刷新，页面 ${pageNumber} 尺寸信息已更新`)
+    }
+  } catch (error) {
+    console.error('刷新文档数据失败:', error)
+  }
+}
+
+const handleAIProcessingComplete = async (data: { pages: number[], result: string }) => {
+  console.log('AI处理完成，刷新文档数据以获取最新的AI处理结果:', data)
+  try {
+    // 重新获取文档数据以更新AI处理结果
+    const refreshedDoc = await GetCurrentDocument()
+    if (refreshedDoc) {
+      currentDocument.value = refreshedDoc
+      console.log('文档数据已刷新，AI处理结果已更新')
+
+      // 通知 PDFViewer 保持当前页面，不要跳转
+      window.dispatchEvent(new CustomEvent('document-refreshed', {
+        detail: {
+          document: refreshedDoc,
+          keepCurrentPage: true,
+          processedPages: data.pages
+        }
+      }))
     }
   } catch (error) {
     console.error('刷新文档数据失败:', error)
@@ -814,6 +852,15 @@ const generateTextContent = (text: string) => {
             </div>
           </div>
         </div>
+
+        <!-- 版权信息 -->
+        <div class="sidebar-copyright">
+          <div class="copyright-content">
+            <div class="copyright-text">{{ appVersionInfo?.copyright || '© 2025 识文君 - PDF智能助手' }}</div>
+            <div class="author-info">{{ appVersionInfo ? `Developed by ${appVersionInfo.author}` : 'Developed by hzruo' }}</div>
+            <div class="author-info">{{ appVersionInfo ? `Version: ${appVersionInfo.version}` : 'Version: 1.0.0' }}</div>
+          </div>
+        </div>
       </aside>
 
       <!-- PDF查看器 -->
@@ -827,6 +874,7 @@ const generateTextContent = (text: string) => {
           @edit-page="handleEditPage"
           @process-pages="(pageNumbers, forceReprocess) => handleProcessPages(pageNumbers, forceReprocess)"
           @page-rendered="handlePageRendered"
+          @ai-processing-complete="handleAIProcessingComplete"
         />
       </div>
     </main>
@@ -1096,6 +1144,8 @@ const generateTextContent = (text: string) => {
   padding: 1.5rem;
   overflow-y: auto;
   position: relative;
+  display: flex;
+  flex-direction: column;
   /* 自定义滚动条样式 */
   scrollbar-width: thin;
   scrollbar-color: #ccc #f0f0f0;
@@ -1874,5 +1924,54 @@ const generateTextContent = (text: string) => {
 .modal-content {
   flex: 1;
   overflow: hidden;
+}
+
+/* 侧边栏版权信息样式 */
+.sidebar-copyright {
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.sidebar-copyright .copyright-content {
+  text-align: center;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+}
+
+.sidebar-copyright .copyright-content:hover {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(102, 126, 234, 0.3);
+  transform: translateY(-1px);
+}
+
+.sidebar-copyright .copyright-text {
+  font-size: 0.75rem;
+  color: #555;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1.3;
+  margin-bottom: 2px;
+}
+
+.sidebar-copyright .author-info {
+  font-size: 0.7rem;
+  color: #777;
+  font-weight: 400;
+  letter-spacing: 0.2px;
+  opacity: 0.8;
+  line-height: 1.2;
+}
+
+.sidebar-copyright .copyright-content:hover .author-info {
+  opacity: 1;
+  color: #666;
 }
 </style>

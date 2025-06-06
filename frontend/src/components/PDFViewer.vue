@@ -1,6 +1,7 @@
 <script lang="ts" setup>
-import { ref, computed, watch, nextTick } from 'vue'
-import { SelectFile, GetPageImage, GetPDFPath } from '../../wailsjs/go/main/App'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { SelectFile, GetPageImage, GetPDFPath, ExtractNativeText, ProcessWithAI } from '../../wailsjs/go/main/App'
+import { renderMarkdown } from '../utils/markdown'
 
 // Props
 interface Props {
@@ -20,6 +21,7 @@ const emit = defineEmits<{
   'edit-page': [pageNumber: number]
   'process-pages': [pageNumbers: number[], forceReprocess?: boolean]
   'page-rendered': [pageNumber: number]
+  'ai-processing-complete': [data: { pages: number[], result: string }]
 }>()
 
 // 响应式数据
@@ -34,6 +36,47 @@ const imageScale = ref(1) // 图片缩放比例
 const splitPosition = ref(50) // 分栏位置百分比
 const isDragging = ref(false) // 是否正在拖拽分割线
 const isRefreshing = ref(false) // 是否正在刷新文档数据，避免无限循环
+const extractingNativeText = ref(false) // 是否正在提取原生文本
+
+// AI处理相关状态
+const showAIPromptDialog = ref(false) // 是否显示AI提示词对话框
+const processingAI = ref(false) // 是否正在进行AI处理
+const aiPrompt = ref('') // AI处理提示词
+const aiProcessingMessage = ref('正在连接AI服务...') // AI处理状态消息
+
+// AI提示词预设
+const promptPresets = [
+  {
+    name: '纠错',
+    prompt: '请纠正以下文本中的OCR识别错误，保持原有格式和结构，只修正错误的字符和单词：',
+    description: '纠正OCR识别中的错误字符'
+  },
+  {
+    name: '总结',
+    prompt: '请总结以下文本的主要内容，提取关键信息和要点：',
+    description: '总结文本的主要内容'
+  },
+  {
+    name: '翻译',
+    prompt: '请将以下文本翻译为英文，保持原有的格式和结构：',
+    description: '翻译为英文'
+  },
+  {
+    name: '格式化',
+    prompt: '请将以下文本格式化为清晰的Markdown格式，包括适当的标题、段落和列表：',
+    description: '格式化为Markdown'
+  },
+  {
+    name: '提取',
+    prompt: '请从以下文本中提取关键信息，包括重要的数据、日期、人名、地名等：',
+    description: '提取关键信息'
+  },
+  {
+    name: '解答',
+    prompt: '请根据以下题目要求完成作答：\n核心内容总结： 清晰、准确地概括文本的核心信息或主旨。\n分步骤解析：\n展示思考过程： 根据题目难度，清晰展示你的关键推理步骤和分析路径（例如：识别关键信息、建立联系、排除干扰项、应用概念/公式/规则等）。\n语言类题目专项： 如涉及语言（词汇、语法、句法、语义、修辞等），必须详细讲解相关要点（例如：解释关键词含义、分析句子结构/成分、说明语法规则应用、阐述表达效果等）。\n复杂学科题目辅助： 如题目涉及复杂逻辑、空间关系、抽象概念（如数学、物理、化学、生物、地理等），必要时可结合示意图、流程图、图表等进行辅助讲解，以增强理解。\n表达规范： 语言简洁清晰，逻辑连贯，术语准确，避免口语化。',
+    description: '根据题目要求进行详细解答分析'
+  }
+]
 
 // 图片模态对话框状态
 const showImageModal = ref(false)
@@ -44,6 +87,18 @@ const totalPages = computed(() => props.document?.page_count || 0)
 const currentPageData = computed(() => {
   if (!hasDocument.value || currentPage.value < 1) return null
   return props.document.pages[currentPage.value - 1]
+})
+
+// AI处理结果的markdown渲染
+const renderedAIText = computed(() => {
+  if (!currentPageData.value?.ai_text) {
+    return ''
+  }
+
+  console.log('原始AI文本:', currentPageData.value.ai_text)
+  const rendered = renderMarkdown(currentPageData.value.ai_text)
+  console.log('渲染后的HTML:', rendered)
+  return rendered
 })
 
 // 监听文档变化
@@ -300,6 +355,218 @@ const openImageModal = () => {
 const closeImageModal = () => {
   showImageModal.value = false
 }
+
+// 切换到原生文本标签页并按需提取文本
+const switchToOriginalTab = async () => {
+  activeTab.value = 'original'
+
+  // 如果当前页面没有原生文本且没有正在提取，则按需提取
+  if (currentPageData.value && !currentPageData.value.text && !extractingNativeText.value) {
+    await extractNativeTextForCurrentPage()
+  }
+}
+
+// 提取当前页面的原生文本
+const extractNativeTextForCurrentPage = async () => {
+  if (!hasDocument.value || extractingNativeText.value) return
+
+  try {
+    extractingNativeText.value = true
+    console.log(`开始提取第${currentPage.value}页原生文本`)
+
+    // 调用后端API提取原生文本
+    const text = await ExtractNativeText(currentPage.value)
+
+    // 更新当前页面数据
+    if (currentPageData.value) {
+      currentPageData.value.text = text
+      currentPageData.value.has_text = text && text.length > 0
+    }
+
+    console.log(`第${currentPage.value}页原生文本提取完成，长度: ${text ? text.length : 0}`)
+  } catch (error) {
+    console.error(`提取第${currentPage.value}页原生文本失败:`, error)
+  } finally {
+    extractingNativeText.value = false
+  }
+}
+
+// 错误消息显示
+const showErrorMessage = (message: string) => {
+  console.error('AI处理错误:', message)
+  // 这里可以使用更好的错误提示组件，暂时使用console.error
+  // 可以添加toast提示或其他用户友好的错误显示方式
+}
+
+// AI处理相关方法
+const closeAIPromptDialog = () => {
+  showAIPromptDialog.value = false
+  aiPrompt.value = ''
+}
+
+const editAIResult = (pageNumber: number) => {
+  // 触发编辑AI结果事件
+  emit('edit-page', pageNumber)
+}
+
+const startAIProcessing = async () => {
+  if (!aiPrompt.value.trim() || processingAI.value) return
+
+  // 检查当前页面是否有可处理的文本
+  if (!currentPageData.value || (!currentPageData.value.ocr_text && !currentPageData.value.text)) {
+    showErrorMessage('当前页面没有可处理的文本，请先进行OCR识别或提取原生文本')
+    return
+  }
+
+  // 立即关闭对话框并开始处理
+  const promptText = aiPrompt.value
+  closeAIPromptDialog()
+
+  // 切换到AI处理结果标签页
+  activeTab.value = 'ai'
+
+  try {
+    processingAI.value = true
+    aiProcessingMessage.value = '正在连接AI服务，请稍候...'
+
+    // 只处理当前页面（单页模式）
+    const pagesToProcess = [currentPage.value]
+
+    console.log(`开始AI处理第${currentPage.value}页，提示词: ${promptText}`)
+
+    // 创建一个Promise来等待AI处理完成事件
+    const aiProcessingPromise = new Promise((resolve, reject) => {
+      let completed = false
+      const targetPage = currentPage.value
+
+      const handleComplete = (data: any) => {
+        console.log('AI处理完成事件:', data)
+        if (!completed && data.pages && data.pages.includes(targetPage)) {
+          completed = true
+          // 通知父组件刷新文档数据以获取最新的AI处理结果
+          emit('ai-processing-complete', {
+            pages: data.pages,
+            result: data.result
+          })
+          resolve(data)
+        }
+      }
+
+      const handleError = (data: any) => {
+        console.error('AI处理错误事件:', data)
+        if (!completed) {
+          completed = true
+          reject(new Error(data.error || '未知错误'))
+        }
+      }
+
+      // 使用一次性事件监听
+      if (typeof window !== 'undefined' && (window as any).runtime?.EventsOn) {
+        const runtime = (window as any).runtime
+
+        // 创建一次性监听器
+        const onceComplete = (data: any) => {
+          handleComplete(data)
+          // 移除监听器
+          if (runtime.EventsOff) {
+            runtime.EventsOff('ai-processing-complete', onceComplete)
+            runtime.EventsOff('ai-processing-error', onceError)
+          }
+        }
+
+        const onceError = (data: any) => {
+          handleError(data)
+          // 移除监听器
+          if (runtime.EventsOff) {
+            runtime.EventsOff('ai-processing-complete', onceComplete)
+            runtime.EventsOff('ai-processing-error', onceError)
+          }
+        }
+
+        runtime.EventsOn('ai-processing-complete', onceComplete)
+        runtime.EventsOn('ai-processing-error', onceError)
+
+        // 设置超时
+        setTimeout(() => {
+          if (!completed) {
+            completed = true
+            // 移除监听器
+            if (runtime.EventsOff) {
+              runtime.EventsOff('ai-processing-complete', onceComplete)
+              runtime.EventsOff('ai-processing-error', onceError)
+            }
+            reject(new Error('AI处理超时'))
+          }
+        }, 60000) // 60秒超时
+      } else {
+        reject(new Error('运行时环境不支持事件监听'))
+      }
+    })
+
+    // 调用后端API进行AI处理
+    ProcessWithAI(pagesToProcess, promptText)
+
+    // 等待AI处理完成事件
+    await aiProcessingPromise
+
+    // 处理完成
+    aiProcessingMessage.value = '处理完成！'
+
+    // 短暂显示完成状态
+    await new Promise(resolve => setTimeout(resolve, 800))
+
+  } catch (error) {
+    console.error('AI处理失败:', error)
+
+    // 解析错误信息
+    let errorMessage = 'AI处理失败，请检查网络连接和AI服务配置'
+    const errorStr = String(error)
+
+    if (errorStr.includes('context deadline exceeded') || errorStr.includes('AI处理超时')) {
+      errorMessage = 'AI处理超时，请检查网络连接或稍后重试'
+    } else if (errorStr.includes('401') || errorStr.includes('Unauthorized')) {
+      errorMessage = 'API密钥无效，请检查设置中的API Key配置'
+    } else if (errorStr.includes('429') || errorStr.includes('rate limit')) {
+      errorMessage = 'API请求频率过高，请稍后重试'
+    } else if (errorStr.includes('500') || errorStr.includes('Internal Server Error')) {
+      errorMessage = 'AI服务暂时不可用，请稍后重试'
+    } else if (errorStr.includes('network') || errorStr.includes('fetch')) {
+      errorMessage = '网络连接失败，请检查网络设置'
+    }
+
+    showErrorMessage(errorMessage)
+
+  } finally {
+    processingAI.value = false
+    aiProcessingMessage.value = '正在连接AI服务...'
+  }
+}
+
+// 监听AI处理事件
+onMounted(() => {
+  // 监听AI处理进度事件
+  if (typeof window !== 'undefined' && (window as any).runtime?.EventsOn) {
+    const runtime = (window as any).runtime
+
+    runtime.EventsOn('ai-processing-progress', (data: any) => {
+      console.log('AI处理进度:', data)
+      // 可以在这里更新进度显示
+    })
+
+    // 监听AI处理完成事件（全局监听，用于其他地方触发的AI处理）
+    runtime.EventsOn('ai-processing-complete', (data: any) => {
+      console.log('AI处理完成（全局监听）:', data)
+      // 这里不需要处理，因为startAIProcessing中已经有专门的处理逻辑
+    })
+
+    // 监听AI处理错误事件
+    runtime.EventsOn('ai-processing-error', (data: any) => {
+      console.error('AI处理错误:', data)
+      processingAI.value = false
+      alert(`AI处理失败: ${data.error || '未知错误'}`)
+    })
+  }
+})
 </script>
 
 <template>
@@ -487,7 +754,7 @@ const closeImageModal = () => {
               <button
                 class="tab-btn"
                 :class="{ active: activeTab === 'original' }"
-                @click="activeTab = 'original'"
+                @click="switchToOriginalTab"
               >
                 原生文本
               </button>
@@ -514,18 +781,100 @@ const closeImageModal = () => {
               <div v-if="activeTab === 'ai'" class="result-panel">
                 <div class="result-header">
                   <h5>AI 处理结果</h5>
+                  <div class="header-buttons">
+                    <button
+                      v-if="!processingAI && (currentPageData.ocr_text || currentPageData.text)"
+                      @click="showAIPromptDialog = true"
+                      class="btn btn-small btn-primary"
+                      title="使用AI处理当前页面文本"
+                    >
+                      AI处理
+                    </button>
+                    <button
+                      v-if="currentPageData.ai_text"
+                      @click="editAIResult(currentPage)"
+                      class="btn btn-small edit-btn"
+                      title="编辑AI处理结果"
+                    >
+                      编辑结果
+                    </button>
+                  </div>
                 </div>
                 <div class="result-text">
-                  {{ currentPageData.ai_text || '暂无 AI 处理结果' }}
+                  <div v-if="processingAI" class="ai-processing-state">
+                    <div class="processing-animation">
+                      <div class="ai-spinner"></div>
+                      <div class="processing-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                    </div>
+                    <div class="processing-info">
+                      <h6>🤖 AI正在处理中</h6>
+                      <p class="processing-message">{{ aiProcessingMessage }}</p>
+                      <p class="processing-tip">请耐心等待，AI正在分析和处理您的文本内容...</p>
+                    </div>
+                  </div>
+                  <div v-else-if="currentPageData.ai_text" class="markdown-content" v-html="renderedAIText">
+                  </div>
+                  <div v-else class="empty-state">
+                    <div class="empty-icon">🤖</div>
+                    <p class="empty-title">暂无AI处理结果</p>
+                    <p class="empty-description">
+                      您可以使用AI对OCR识别结果或原生文本进行处理，<br>
+                      如纠错、总结、翻译、格式化等。
+                    </p>
+                    <button
+                      v-if="currentPageData.ocr_text || currentPageData.text"
+                      @click="showAIPromptDialog = true"
+                      class="btn btn-primary"
+                    >
+                      开始AI处理
+                    </button>
+                    <p v-else class="empty-hint">
+                      请先进行OCR识别或提取原生文本
+                    </p>
+                  </div>
                 </div>
               </div>
 
               <div v-if="activeTab === 'original'" class="result-panel">
                 <div class="result-header">
                   <h5>PDF 原生文本</h5>
+                  <div class="header-buttons">
+                    <button
+                      v-if="!currentPageData.text && !extractingNativeText"
+                      @click="extractNativeTextForCurrentPage"
+                      class="btn btn-small btn-primary"
+                      title="提取当前页面的原生文本"
+                    >
+                      提取原生文本
+                    </button>
+                  </div>
                 </div>
                 <div class="result-text">
-                  {{ currentPageData.text || '暂无原生文本' }}
+                  <div v-if="extractingNativeText" class="loading-state">
+                    <div class="spinner"></div>
+                    <p>正在提取原生文本...</p>
+                  </div>
+                  <div v-else-if="currentPageData.text" class="text-content">
+                    {{ currentPageData.text }}
+                  </div>
+                  <div v-else class="empty-state">
+                    <div class="empty-icon">📄</div>
+                    <p class="empty-title">该页面暂无原生文本</p>
+                    <p class="empty-description">
+                      PDF页面可能是扫描图片<br>
+                      您可以点击按钮重试提取或使用OCR识别
+                    </p>
+                    <button
+                      @click="extractNativeTextForCurrentPage"
+                      class="btn btn-primary"
+                    >
+                      重试提取
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -613,1083 +962,56 @@ const closeImageModal = () => {
         </div>
       </div>
     </div>
+
+    <!-- AI提示词输入对话框 -->
+    <div v-if="showAIPromptDialog" class="modal-overlay" @click="closeAIPromptDialog">
+      <div class="ai-prompt-modal" @click.stop>
+        <div class="modal-header">
+          <h3>AI处理设置 - 第{{ currentPage }}页</h3>
+          <button @click="closeAIPromptDialog" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="prompt-section">
+            <label for="ai-prompt">处理指令：</label>
+            <textarea
+              id="ai-prompt"
+              v-model="aiPrompt"
+              placeholder="请输入AI处理指令，例如：&#10;- 纠正OCR识别错误&#10;- 总结文本内容&#10;- 翻译为英文&#10;- 格式化为Markdown&#10;- 提取关键信息"
+              class="prompt-textarea"
+              rows="6"
+            ></textarea>
+            <div class="prompt-presets">
+              <span class="presets-label">常用指令：</span>
+              <button
+                v-for="preset in promptPresets"
+                :key="preset.name"
+                @click="aiPrompt = preset.prompt"
+                class="preset-btn"
+                :title="preset.description"
+              >
+                {{ preset.name }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button @click="closeAIPromptDialog" class="btn btn-secondary">
+            取消
+          </button>
+          <button
+            @click="startAIProcessing"
+            class="btn btn-primary"
+            :disabled="!aiPrompt.trim() || processingAI"
+          >
+            {{ processingAI ? '处理中...' : '开始处理' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.pdf-viewer {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.file-drop-zone {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.8);
-  border: 2px dashed rgba(102, 126, 234, 0.3);
-  margin: 2rem;
-  border-radius: 16px;
-  backdrop-filter: blur(10px);
-  transition: all 0.3s ease;
-}
-
-.file-drop-zone:hover {
-  border-color: rgba(102, 126, 234, 0.6);
-  background: rgba(255, 255, 255, 0.9);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
-}
-
-.drop-content {
-  text-align: center;
-  padding: 3rem 2rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.drop-icon {
-  font-size: 4rem;
-  margin-bottom: 1.5rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.drop-content h3 {
-  margin: 0 0 1rem 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  font-size: 1.5rem;
-  font-weight: 600;
-}
-
-.drop-content p {
-  margin: 0 0 2rem 0;
-  color: #666;
-  font-size: 1.1rem;
-  line-height: 1.6;
-}
-
-.viewer-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.viewer-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 1.5rem;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-}
-
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.document-info {
-  font-size: 0.9rem;
-  color: #666;
-  max-width: 250px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: rgba(102, 126, 234, 0.1);
-  padding: 0.5rem 1rem;
-  border-radius: 20px;
-  font-weight: 500;
-}
-
-.toolbar-center {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.page-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.page-input {
-  width: 60px;
-  padding: 0.25rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  text-align: center;
-}
-
-.single-view {
-  flex: 1;
-  overflow: auto;
-  padding: 1rem;
-}
-
-.page-container {
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-.page-wrapper {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.page-selector {
-  padding: 1rem 1.5rem;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.page-image-container {
-  display: flex;
-  justify-content: center;
-  padding: 1rem;
-  min-height: 400px;
-}
-
-.page-image {
-  max-width: 100%;
-  max-height: 800px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-  border-radius: 4px;
-}
-
-.loading-placeholder,
-.error-placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 400px;
-  color: #666;
-}
-
-.spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #007bff;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 1rem;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-/* 页面结果面板样式 */
-.page-results-panel {
-  background: #f8f9fa;
-  border-top: 1px solid #e0e0e0;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
-/* 右侧结果面板样式 */
-.results-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  background: #f8f9fa;
-}
-
-.results-panel .page-info-section {
-  flex: 0 0 auto;
-}
-
-.results-panel .parsing-results {
-  flex: 1;
-  min-height: 0;
-}
-
-.page-info-section {
-  padding: 1rem;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.page-info-section h4 {
-  margin: 0 0 1rem 0;
-  color: #333;
-  font-size: 1.1rem;
-}
-
-.page-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
-.meta-item {
-  font-size: 0.9rem;
-  color: #666;
-}
-
-.status-processed {
-  color: #28a745;
-  font-weight: 500;
-}
-
-.status-unprocessed {
-  color: #dc3545;
-  font-weight: 500;
-}
-
-/* 解析结果样式 */
-.parsing-results {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: white;
-  min-height: 300px;
-  max-height: 75vh; /* 设置最大高度为视口高度的75% */
-  overflow-y: scroll; /* 强制显示垂直滚动条 */
-  border: 1px solid #e0e0e0; /* 添加边框便于调试 */
-  /* 自定义滚动条样式 */
-  scrollbar-width: thin;
-  scrollbar-color: #ccc #f0f0f0;
-}
-
-.parsing-results::-webkit-scrollbar {
-  width: 8px;
-}
-
-.parsing-results::-webkit-scrollbar-track {
-  background: #f0f0f0;
-  border-radius: 4px;
-}
-
-.parsing-results::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 4px;
-}
-
-.parsing-results::-webkit-scrollbar-thumb:hover {
-  background: #999;
-}
-
-.results-tabs {
-  flex: 0 0 auto;
-  display: flex;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.tab-btn {
-  padding: 0.75rem 1rem;
-  border: none;
-  background: transparent;
-  color: #666;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-  font-size: 0.9rem;
-}
-
-.tab-btn:hover {
-  background: #f8f9fa;
-  color: #333;
-}
-
-.tab-btn.active {
-  color: #007bff;
-  border-bottom-color: #007bff;
-  background: white;
-}
-
-.results-content {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-  /* 自定义滚动条样式 */
-  scrollbar-width: thin;
-  scrollbar-color: #ccc #f0f0f0;
-}
-
-.results-content::-webkit-scrollbar {
-  width: 8px;
-}
-
-.results-content::-webkit-scrollbar-track {
-  background: #f0f0f0;
-  border-radius: 4px;
-}
-
-.results-content::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 4px;
-}
-
-.results-content::-webkit-scrollbar-thumb:hover {
-  background: #999;
-}
-
-.result-panel {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: 1rem;
-}
-
-.result-header {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.result-header h5 {
-  margin: 0;
-  color: #333;
-  font-size: 1rem;
-}
-
-.edit-btn {
-  background: #007bff;
-  color: white;
-  border: none;
-}
-
-.edit-btn:hover {
-  background: #0056b3;
-}
-
-.result-text {
-  flex: 1;
-  overflow-y: auto;
-  padding: 1rem;
-  background: #f8f9fa;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  color: #333;
-  min-height: 0;
-  /* 自定义滚动条样式 */
-  scrollbar-width: thin;
-  scrollbar-color: #ccc #f0f0f0;
-}
-
-.result-text::-webkit-scrollbar {
-  width: 8px;
-}
-
-.result-text::-webkit-scrollbar-track {
-  background: #f0f0f0;
-  border-radius: 4px;
-}
-
-.result-text::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 4px;
-}
-
-.result-text::-webkit-scrollbar-thumb:hover {
-  background: #999;
-}
-
-.grid-view {
-  flex: 1;
-  overflow: auto;
-  padding: 1rem;
-  background: #f8f9fa;
-  /* 自定义滚动条样式 */
-  scrollbar-width: thin;
-  scrollbar-color: #ccc #f0f0f0;
-}
-
-.grid-view::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.grid-view::-webkit-scrollbar-track {
-  background: #f0f0f0;
-  border-radius: 4px;
-}
-
-.grid-view::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 4px;
-}
-
-.grid-view::-webkit-scrollbar-thumb:hover {
-  background: #999;
-}
-
-.pages-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--grid-size, 200px), 1fr));
-  gap: 1rem;
-  max-width: 100%;
-}
-
-.grid-page {
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  overflow: hidden;
-  cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.grid-page:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-}
-
-.grid-page.selected {
-  border: 2px solid #007bff;
-}
-
-.grid-page.current {
-  border: 2px solid #28a745;
-}
-
-.grid-page-header {
-  padding: 0.5rem;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e0e0e0;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
-}
-
-.grid-page-image {
-  height: calc(var(--grid-size, 200px) * 1.25);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background: #fafafa;
-}
-
-.grid-page-image img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-}
-
-.grid-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #f8f9fa;
-  color: #666;
-  font-size: 0.9rem;
-}
-
-.btn {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 500;
-  transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-}
-
-.btn::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left 0.5s;
-}
-
-.btn:hover::before {
-  left: 100%;
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
-}
-
-.btn-secondary {
-  background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.btn-secondary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(108, 117, 125, 0.4);
-}
-
-.btn-nav {
-  background: rgba(255, 255, 255, 0.9);
-  color: #333;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  padding: 0.5rem 1rem;
-  border-radius: 8px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.btn-nav:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 1);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.btn-nav:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.btn-large {
-  padding: 1rem 2rem;
-  font-size: 1.1rem;
-  border-radius: 12px;
-}
-
-.btn-small {
-  padding: 0.5rem 1rem;
-  font-size: 0.8rem;
-  border-radius: 8px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.page-checkbox {
-  margin: 0;
-}
-
-/* 浏览器预览样式 */
-.browser-view {
-  flex: 1;
-  display: flex;
-  gap: 1rem;
-  padding: 1rem;
-}
-
-.browser-container {
-  flex: 1;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  overflow: hidden;
-}
-
-.pdf-iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-  min-height: 600px;
-}
-
-.browser-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 600px;
-  color: #666;
-}
-
-.page-selection-panel {
-  width: 250px;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  padding: 1rem;
-  max-height: 600px;
-  overflow-y: auto;
-}
-
-.page-selection-panel h4 {
-  margin: 0 0 1rem 0;
-  color: #333;
-  font-size: 1rem;
-}
-
-.page-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.page-checkbox-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.page-checkbox-item:hover {
-  background: #f8f9fa;
-}
-
-.page-checkbox-item input[type="checkbox"] {
-  margin: 0;
-}
-
-.selection-summary {
-  padding: 0.5rem;
-  background: #f8f9fa;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  color: #666;
-  text-align: center;
-}
-
-.browser-info {
-  color: #666;
-  font-size: 0.9rem;
-}
-
-.current-mode {
-  font-size: 0.8rem;
-  color: #666;
-  margin-left: 0.5rem;
-}
-
-/* 网格控制样式 */
-.grid-controls {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.grid-info {
-  color: #666;
-  font-size: 0.9rem;
-}
-
-.grid-size-control {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
-}
-
-.grid-size-control label {
-  color: #666;
-  margin: 0;
-}
-
-.size-slider {
-  width: 100px;
-}
-
-.size-value {
-  color: #333;
-  font-weight: 500;
-  min-width: 50px;
-}
-
-.placeholder-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.placeholder-text {
-  font-size: 0.8rem;
-  color: #999;
-}
-
-/* 单页视图左右分栏布局 */
-.single-view {
-  flex: 1;
-  display: flex;
-  flex-direction: row;
-  overflow: hidden;
-  padding: 0;
-  gap: 0;
-}
-
-/* 左侧预览面板 */
-.preview-panel {
-  display: flex;
-  flex-direction: column;
-  background: white;
-  border-right: 1px solid #e0e0e0;
-  min-width: 300px;
-  overflow: hidden;
-}
-
-.preview-header {
-  flex: 0 0 auto;
-  padding: 1rem;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e0e0e0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
-.page-selector {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.zoom-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.zoom-level {
-  min-width: 50px;
-  text-align: center;
-  font-size: 0.9rem;
-  color: #666;
-}
-
-.image-preview-container {
-  flex: 1;
-  overflow: auto;
-  padding: 1rem;
-  background: #fafafa;
-  /* 自定义滚动条样式 */
-  scrollbar-width: thin;
-  scrollbar-color: #ccc #f0f0f0;
-}
-
-.image-preview-container::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.image-preview-container::-webkit-scrollbar-track {
-  background: #f0f0f0;
-  border-radius: 4px;
-}
-
-.image-preview-container::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 4px;
-}
-
-.image-preview-container::-webkit-scrollbar-thumb:hover {
-  background: #999;
-}
-
-.image-wrapper {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start; /* 改为顶部对齐，避免图片被裁剪 */
-  min-height: 100%;
-  transition: transform 0.2s ease;
-  transform-origin: center;
-}
-
-.preview-image {
-  max-width: 100%;
-  height: auto;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-  border-radius: 4px;
-  display: block;
-  cursor: pointer; /* 添加点击光标 */
-  /* 确保图片可以完整显示 */
-  object-fit: contain;
-  transition: transform 0.2s ease;
-}
-
-.preview-image:hover {
-  transform: scale(1.02);
-}
-
-
-
-/* 图片模态对话框样式 */
-.image-modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999; /* 提高层级，确保在最上层 */
-  backdrop-filter: blur(4px);
-}
-
-.image-modal {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  width: 70vw; /* 减少宽度，减少左右空白 */
-  height: 85vh; /* 稍微减少高度，避免被标题栏遮挡 */
-  max-width: 900px; /* 减少最大宽度 */
-  max-height: 700px; /* 减少最大高度 */
-  min-width: 600px; /* 设置最小宽度，确保在小屏幕下可用 */
-  min-height: 500px; /* 设置最小高度 */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  margin-top: 2vh; /* 添加顶部边距，避免被标题栏遮挡 */
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 1.5rem;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.modal-header h3 {
-  margin: 0;
-  color: #333;
-  font-size: 1.2rem;
-}
-
-.modal-controls {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.modal-tip {
-  font-size: 0.9rem;
-  color: #666;
-  font-style: italic;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  color: #666;
-  cursor: pointer;
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  transition: all 0.2s;
-}
-
-.close-btn:hover {
-  background: #e0e0e0;
-  color: #333;
-}
-
-.modal-body {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  overflow: auto;
-  background: #fafafa;
-}
-
-.image-container {
-  max-width: 100%;
-  max-height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-image {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-  cursor: grab;
-}
-
-.modal-image:active {
-  cursor: grabbing;
-}
-
-.modal-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 1.5rem;
-  background: #f8f9fa;
-  border-top: 1px solid #e0e0e0;
-}
-
-.image-info {
-  color: #666;
-  font-size: 0.9rem;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-/* 响应式设计 - 小屏幕优化 */
-@media (max-width: 768px) {
-  .image-modal {
-    width: 95vw;
-    height: 80vh;
-    min-width: 320px;
-    min-height: 400px;
-    margin-top: 5vh; /* 小屏幕下增加顶部边距 */
-  }
-
-  .modal-header {
-    padding: 0.8rem 1rem;
-  }
-
-  .modal-header h3 {
-    font-size: 1rem;
-  }
-
-  .modal-tip {
-    display: none; /* 小屏幕下隐藏提示文字 */
-  }
-
-  .modal-actions {
-    flex-wrap: wrap;
-    gap: 0.3rem;
-  }
-
-  .btn {
-    font-size: 0.8rem;
-    padding: 6px 12px;
-  }
-}
-
-@media (max-height: 600px) {
-  .image-modal {
-    height: 90vh;
-    margin-top: 1vh; /* 低高度屏幕下减少顶部边距 */
-  }
-
-  .modal-header {
-    padding: 0.5rem 1rem;
-  }
-
-  .modal-footer {
-    padding: 0.5rem 1rem;
-  }
-}
-
-/* 分割线 */
-.split-divider {
-  width: 4px;
-  background: #e0e0e0;
-  cursor: col-resize;
-  position: relative;
-  transition: background-color 0.2s;
-}
-
-.split-divider:hover,
-.split-divider.dragging {
-  background: #007bff;
-}
-
-.split-divider::before {
-  content: '';
-  position: absolute;
-  left: -2px;
-  right: -2px;
-  top: 0;
-  bottom: 0;
-}
-
-/* 右侧结果面板 */
-.results-panel {
-  display: flex;
-  flex-direction: column;
-  background: white;
-  min-width: 300px;
-  overflow: hidden;
-}
-
-.result-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.header-buttons {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.btn-warning {
-  background: #ffc107;
-  color: #212529;
-  border: 1px solid #ffc107;
-}
-
-.btn-warning:hover {
-  background: #e0a800;
-  border-color: #d39e00;
-}
-
-.size-pending {
-  color: #6c757d;
-  font-style: italic;
-  font-size: 0.9em;
-}
+/* 引入外部样式文件 */
+@import '../styles/PDFViewer.css';
 </style>

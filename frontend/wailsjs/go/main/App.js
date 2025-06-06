@@ -18,6 +18,14 @@ export function ExportText(arg1, arg2) {
   return window['go']['main']['App']['ExportText'](arg1, arg2);
 }
 
+export function ExtractNativeText(arg1) {
+  return window['go']['main']['App']['ExtractNativeText'](arg1);
+}
+
+export function GetAppVersion() {
+  return window['go']['main']['App']['GetAppVersion']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }

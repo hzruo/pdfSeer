@@ -8,6 +8,8 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/h2non/bimg"
@@ -263,8 +265,21 @@ func (p *PDFProcessor) UpdatePageAI(doc *PDFDocument, pageNum int, aiText string
 
 	doc.mu.Lock()
 	defer doc.mu.Unlock()
-	
+
 	doc.Pages[pageNum-1].AIText = aiText
+}
+
+// UpdatePageText 更新页面原生文本
+func (p *PDFProcessor) UpdatePageText(doc *PDFDocument, pageNum int, text string) {
+	if pageNum < 1 || pageNum > len(doc.Pages) {
+		return
+	}
+
+	doc.mu.Lock()
+	defer doc.mu.Unlock()
+
+	doc.Pages[pageNum-1].Text = text
+	doc.Pages[pageNum-1].HasText = text != ""
 }
 
 // GetPage 获取页面信息
@@ -495,6 +510,446 @@ func (p *PDFProcessor) drawText(img *image.RGBA, text string, startX, startY int
 }
 
 
+
+// ExtractNativeText 提取PDF页面的原生文本
+func (p *PDFProcessor) ExtractNativeText(filePath string, pageNum int) (string, bool, error) {
+	fmt.Printf("[DEBUG] 开始提取第%d页原生文本，PDF文件: %s\n", pageNum, filePath)
+
+	// 创建临时目录用于提取PDF内容
+	tempDir, err := os.MkdirTemp("", "pdf_content_extract_")
+	if err != nil {
+		fmt.Printf("[WARN] 创建临时目录失败: %v\n", err)
+		return "", false, err
+	}
+	defer os.RemoveAll(tempDir)
+
+	// 使用pdfcpu提取指定页面的内容
+	err = api.ExtractContentFile(filePath, tempDir, []string{fmt.Sprintf("%d", pageNum)}, nil)
+	if err != nil {
+		fmt.Printf("[WARN] 提取第%d页PDF内容失败: %v\n", pageNum, err)
+		return "", false, err
+	}
+
+	// 查找生成的内容文件
+	files, err := filepath.Glob(filepath.Join(tempDir, "*.txt"))
+	if err != nil {
+		fmt.Printf("[WARN] 查找内容文件失败: %v\n", err)
+		return "", false, err
+	}
+
+	if len(files) == 0 {
+		fmt.Printf("[DEBUG] 第%d页没有生成内容文件\n", pageNum)
+		return "", false, nil
+	}
+
+	// 读取并解析PDF内容文件
+	var allText strings.Builder
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			fmt.Printf("[WARN] 读取内容文件失败: %v\n", err)
+			continue
+		}
+
+		// 解析PDF语法内容，提取文本
+		text := p.parsePDFContent(string(content))
+		if text != "" {
+			allText.WriteString(text)
+			allText.WriteString("\n")
+		}
+	}
+
+	// 清理提取的文本
+	extractedText := p.cleanExtractedText(allText.String())
+
+	// 判断是否有有效文本
+	hasText := len(extractedText) > 10 && len(strings.TrimSpace(extractedText)) > 5
+
+	if hasText {
+		fmt.Printf("[DEBUG] 第%d页原生文本提取成功，文本长度: %d\n", pageNum, len(extractedText))
+	} else {
+		fmt.Printf("[DEBUG] 第%d页无有效原生文本\n", pageNum)
+	}
+
+	return extractedText, hasText, nil
+}
+
+// parsePDFContent 解析PDF内容，提取其中的文本
+func (p *PDFProcessor) parsePDFContent(content string) string {
+	var textSegments []string
+
+	// 使用正则表达式匹配PDF文本操作符
+	// Tj 操作符：显示文本字符串
+	tjRegex := regexp.MustCompile(`\(([^)]*)\)\s*Tj`)
+	tjMatches := tjRegex.FindAllStringSubmatch(content, -1)
+
+	for _, match := range tjMatches {
+		if len(match) > 1 {
+			text := p.decodePDFString(match[1])
+			if text != "" {
+				textSegments = append(textSegments, text)
+			}
+		}
+	}
+
+	// TJ 操作符：显示文本数组
+	tjArrayRegex := regexp.MustCompile(`\[([^\]]*)\]\s*TJ`)
+	tjArrayMatches := tjArrayRegex.FindAllStringSubmatch(content, -1)
+
+	for _, match := range tjArrayMatches {
+		if len(match) > 1 {
+			// 解析数组中的文本字符串和数字（间距调整）
+			arrayContent := match[1]
+
+			// 匹配文本字符串和数字
+			elementRegex := regexp.MustCompile(`\(([^)]*)\)|(-?\d+(?:\.\d+)?)`)
+			elementMatches := elementRegex.FindAllStringSubmatch(arrayContent, -1)
+
+			var arrayText strings.Builder
+			for _, elementMatch := range elementMatches {
+				if len(elementMatch) > 1 {
+					if elementMatch[1] != "" {
+						// 这是文本字符串
+						text := p.decodePDFString(elementMatch[1])
+						arrayText.WriteString(text)
+					} else if elementMatch[2] != "" {
+						// 这是数字（间距调整）
+						// 负数表示增加间距，正数表示减少间距
+						// 根据数值大小决定是否添加空格
+						if spacing := elementMatch[2]; spacing != "" {
+							if strings.HasPrefix(spacing, "-") && len(spacing) > 2 {
+								// 较大的负数通常表示单词间的空格
+								arrayText.WriteString(" ")
+							}
+						}
+					}
+				}
+			}
+
+			if arrayText.Len() > 0 {
+				textSegments = append(textSegments, arrayText.String())
+			}
+		}
+	}
+
+	// 查找其他可能的文本模式
+	// 有些PDF可能使用不同的文本操作符
+	otherTextRegex := regexp.MustCompile(`<([0-9A-Fa-f]+)>\s*Tj`)
+	otherMatches := otherTextRegex.FindAllStringSubmatch(content, -1)
+
+	for _, match := range otherMatches {
+		if len(match) > 1 {
+			text := p.decodeHexString(match[1])
+			if text != "" {
+				textSegments = append(textSegments, text)
+			}
+		}
+	}
+
+	// 将所有文本段合并并进行智能排版优化
+	return p.optimizeTextLayout(textSegments)
+}
+
+// optimizeTextLayout 优化文本排版
+func (p *PDFProcessor) optimizeTextLayout(textSegments []string) string {
+	if len(textSegments) == 0 {
+		return ""
+	}
+
+	// 合并所有文本段
+	fullText := strings.Join(textSegments, " ")
+
+	// 1. 处理常见的PDF编码问题
+	fullText = p.fixPDFEncoding(fullText)
+
+	// 2. 修复单词拆分问题
+	fullText = p.fixWordSplitting(fullText)
+
+	// 3. 处理行尾连字符
+	fullText = p.fixHyphenation(fullText)
+
+	// 4. 规范化空白字符
+	fullText = p.normalizeWhitespace(fullText)
+
+	// 5. 修复句子结构
+	fullText = p.fixSentenceStructure(fullText)
+
+	return fullText
+}
+
+// fixPDFEncoding 修复PDF编码问题
+func (p *PDFProcessor) fixPDFEncoding(text string) string {
+	// 处理常见的PDF编码转义序列
+	replacements := map[string]string{
+		`\201`: "'",     // 左单引号
+		`\202`: "'",     // 右单引号
+		`\203`: `"`,     // 左双引号
+		`\204`: `"`,     // 右双引号
+		`\205`: "…",     // 省略号
+		`\206`: "–",     // en dash
+		`\207`: "—",     // em dash
+		`\210`: "",      // 删除
+		`\211`: "",      // 删除
+		`\212`: "",      // 删除
+		`\213`: "",      // 删除
+		`\214`: "",      // 删除
+		`\215`: "",      // 删除
+		`\216`: "",      // 删除
+		`\217`: "",      // 删除
+		`\220`: "",      // 删除
+		`\221`: "",      // 删除
+		`\222`: "",      // 删除
+		`\223`: "",      // 删除
+		`\224`: "",      // 删除
+		`\225`: "",      // 删除
+		`\226`: "",      // 删除
+		`\227`: "",      // 删除
+		`\230`: "",      // 删除
+		`\231`: "",      // 删除
+		`\232`: "",      // 删除
+		`\233`: "",      // 删除
+		`\234`: "",      // 删除
+		`\235`: "",      // 删除
+		`\236`: "",      // 删除
+		`\237`: "",      // 删除
+		`\240`: " ",     // 不间断空格
+	}
+
+	for old, new := range replacements {
+		text = strings.ReplaceAll(text, old, new)
+	}
+
+	return text
+}
+
+// fixWordSplitting 修复单词拆分问题
+func (p *PDFProcessor) fixWordSplitting(text string) string {
+	// 修复常见的单词拆分问题
+	wordFixes := map[string]string{
+		"J a vaScript":     "JavaScript",
+		"T ypeScript":      "TypeScript",
+		"H TML":           "HTML",
+		"C SS":            "CSS",
+		"A PI":            "API",
+		"U RL":            "URL",
+		"H TTP":           "HTTP",
+		"H TTPS":          "HTTPS",
+		"J SON":           "JSON",
+		"X ML":            "XML",
+		"S QL":            "SQL",
+		"P DF":            "PDF",
+		"U I":             "UI",
+		"U X":             "UX",
+		"I D":             "ID",
+		"V ue":            "Vue",
+		"R eact":          "React",
+		"A ngular":        "Angular",
+		"N ode":           "Node",
+		"N PM":            "NPM",
+		"G it":            "Git",
+		"G itHub":         "GitHub",
+		"V irtual D OM":   "Virtual DOM",
+		"D OM":            "DOM",
+		"fron tend":       "frontend",
+		"back end":        "backend",
+		"full stack":      "fullstack",
+		"web a pp":        "web app",
+		"a pplica tion":   "application",
+		"a pplica tions":  "applications",
+		"developmen t":    "development",
+		"managemen t":     "management",
+		"environmen t":    "environment",
+		"componen t":      "component",
+		"componen ts":     "components",
+		"framew ork":      "framework",
+		"librar y":        "library",
+		"ser ver":         "server",
+		"righ t":          "right",
+		"straigh t":       "straight",
+		"in teractive":    "interactive",
+		"scra tch":        "scratch",
+		"founda tion":     "foundation",
+		"con ten t":       "content",
+		"con ten ts":      "contents",
+		"con ven tion":    "convention",
+		"con ven tions":   "conventions",
+		"typogra phical":  "typographical",
+		"significan t":    "significant",
+		"essen tial":      "essential",
+		"straigh tfor ward": "straightforward",
+		"in troduce":      "introduce",
+		"alwa ys":         "always",
+		"wa y":            "way",
+		"a wa y":          "away",
+		"doesn ":          "doesn't",
+		"doesn\\'":        "doesn't",
+		"I t":             "It",
+		"Y ou":            "You",
+		"H ence":          "Hence",
+		"W eb":            "Web",
+		"Cha pter":        "Chapter",
+		"A":               "A",
+		"an y":            "any",
+		"ha ve":           "have",
+		"righ t a wa y":   "right away",
+	}
+
+	for broken, fixed := range wordFixes {
+		text = strings.ReplaceAll(text, broken, fixed)
+	}
+
+	// 使用正则表达式修复更通用的拆分模式
+	// 修复单个字母后跟空格的情况（如 "a pple" -> "apple"）
+	singleLetterRegex := regexp.MustCompile(`\b([a-z]) ([a-z]{2,})`)
+	text = singleLetterRegex.ReplaceAllString(text, "$1$2")
+
+	return text
+}
+
+// decodePDFString 解码PDF字符串
+func (p *PDFProcessor) decodePDFString(pdfStr string) string {
+	// 处理PDF字符串中的转义字符
+	result := strings.ReplaceAll(pdfStr, `\n`, "\n")
+	result = strings.ReplaceAll(result, `\r`, "\r")
+	result = strings.ReplaceAll(result, `\t`, "\t")
+	result = strings.ReplaceAll(result, `\b`, "\b")
+	result = strings.ReplaceAll(result, `\f`, "\f")
+	result = strings.ReplaceAll(result, `\\`, "\\")
+	result = strings.ReplaceAll(result, `\(`, "(")
+	result = strings.ReplaceAll(result, `\)`, ")")
+
+	// 处理八进制转义序列
+	octalRegex := regexp.MustCompile(`\\([0-7]{1,3})`)
+	result = octalRegex.ReplaceAllStringFunc(result, func(match string) string {
+		octalStr := match[1:] // 去掉反斜杠
+		if len(octalStr) > 0 {
+			// 简单处理：如果是可打印字符范围，直接转换
+			// 这里可以根据需要实现更完整的八进制转换
+			return match // 暂时保持原样
+		}
+		return match
+	})
+
+	return result
+}
+
+// fixHyphenation 处理行尾连字符
+func (p *PDFProcessor) fixHyphenation(text string) string {
+	// 处理行尾连字符（如 "develop-\nment" -> "development"）
+	hyphenRegex := regexp.MustCompile(`([a-z])-\s*\n\s*([a-z])`)
+	text = hyphenRegex.ReplaceAllString(text, "$1$2")
+
+	// 处理其他连字符情况
+	hyphenSpaceRegex := regexp.MustCompile(`([a-z])-\s+([a-z])`)
+	text = hyphenSpaceRegex.ReplaceAllString(text, "$1$2")
+
+	return text
+}
+
+// normalizeWhitespace 规范化空白字符
+func (p *PDFProcessor) normalizeWhitespace(text string) string {
+	// 将多个连续的空格替换为单个空格
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+
+	// 处理标点符号前的空格
+	text = regexp.MustCompile(`\s+([,.!?;:])`).ReplaceAllString(text, "$1")
+
+	// 处理标点符号后的空格
+	text = regexp.MustCompile(`([,.!?;:])\s*`).ReplaceAllString(text, "$1 ")
+
+	// 处理括号内的空格
+	text = regexp.MustCompile(`\(\s+`).ReplaceAllString(text, "(")
+	text = regexp.MustCompile(`\s+\)`).ReplaceAllString(text, ")")
+
+	// 去除首尾空白
+	text = strings.TrimSpace(text)
+
+	return text
+}
+
+// fixSentenceStructure 修复句子结构
+func (p *PDFProcessor) fixSentenceStructure(text string) string {
+	// 确保句子开头大写
+	sentenceRegex := regexp.MustCompile(`([.!?]\s+)([a-z])`)
+	text = sentenceRegex.ReplaceAllStringFunc(text, func(match string) string {
+		parts := sentenceRegex.FindStringSubmatch(match)
+		if len(parts) >= 3 {
+			return parts[1] + strings.ToUpper(parts[2])
+		}
+		return match
+	})
+
+	// 确保文本开头大写
+	if len(text) > 0 {
+		firstChar := string(text[0])
+		if firstChar >= "a" && firstChar <= "z" {
+			text = strings.ToUpper(firstChar) + text[1:]
+		}
+	}
+
+	// 处理常见的句子分隔问题
+	text = strings.ReplaceAll(text, " . ", ". ")
+	text = strings.ReplaceAll(text, " , ", ", ")
+	text = strings.ReplaceAll(text, " ; ", "; ")
+	text = strings.ReplaceAll(text, " : ", ": ")
+	text = strings.ReplaceAll(text, " ! ", "! ")
+	text = strings.ReplaceAll(text, " ? ", "? ")
+
+	return text
+}
+
+// decodeHexString 解码十六进制字符串
+func (p *PDFProcessor) decodeHexString(hexStr string) string {
+	// 简单的十六进制解码
+	// 这里可以实现更完整的十六进制到文本的转换
+	// 暂时返回空字符串，因为需要更复杂的编码处理
+	return ""
+}
+
+// cleanExtractedText 清理提取的文本
+func (p *PDFProcessor) cleanExtractedText(text string) string {
+	// 去除首尾空白
+	text = strings.TrimSpace(text)
+
+	// 将多个连续的空格替换为单个空格
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+
+	// 将多个连续的空行替换为单个空行
+	text = regexp.MustCompile(`\n\s*\n\s*\n`).ReplaceAllString(text, "\n\n")
+
+	// 去除行首行尾的空白字符，但保留换行
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// ExtractAllNativeText 提取PDF所有页面的原生文本
+func (p *PDFProcessor) ExtractAllNativeText(doc *PDFDocument) error {
+	fmt.Printf("[DEBUG] 开始提取PDF所有页面的原生文本，共%d页\n", doc.PageCount)
+
+	for i := 1; i <= doc.PageCount; i++ {
+		text, hasText, err := p.ExtractNativeText(doc.FilePath, i)
+		if err != nil {
+			// 提取失败不影响其他页面，继续处理
+			fmt.Printf("[WARN] 第%d页原生文本提取失败: %v\n", i, err)
+			continue
+		}
+
+		// 更新页面信息
+		doc.mu.Lock()
+		if i <= len(doc.Pages) {
+			doc.Pages[i-1].Text = text
+			doc.Pages[i-1].HasText = hasText
+		}
+		doc.mu.Unlock()
+	}
+
+	fmt.Printf("[DEBUG] PDF原生文本提取完成\n")
+	return nil
+}
 
 // Cleanup 清理临时文件
 func (p *PDFProcessor) Cleanup() error {

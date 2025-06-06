@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, watch } from 'vue'
 import { GetConfig, UpdateConfig } from '../../wailsjs/go/main/App'
+import CustomDialog from './CustomDialog.vue'
 
 // Emits
 const emit = defineEmits<{
@@ -45,6 +46,17 @@ const themeOptions = [
   { value: 'auto', label: '跟随系统' }
 ]
 
+// 对话框状态
+const dialog = ref({
+  show: false,
+  title: '',
+  message: '',
+  type: 'info' as 'info' | 'success' | 'warning' | 'error' | 'confirm',
+  showCancel: false,
+  onConfirm: () => {},
+  onCancel: () => {}
+})
+
 // 生命周期
 onMounted(async () => {
   await loadConfig()
@@ -75,7 +87,11 @@ const loadConfig = async () => {
     }
   } catch (error) {
     console.error('加载配置失败:', error)
-    alert('加载配置失败: ' + error)
+    showDialog({
+      title: '加载失败',
+      message: `加载配置失败: ${error}`,
+      type: 'error'
+    })
   } finally {
     loading.value = false
   }
@@ -106,15 +122,11 @@ const fetchModels = async () => {
     const data = await response.json()
 
     if (data.data && Array.isArray(data.data)) {
-      // 过滤出支持视觉的模型
-      const visionModels = data.data.filter((model: any) =>
-        model.id.includes('vision') ||
-        model.id.includes('gpt-4') ||
-        model.id.includes('gpt-4o')
-      )
+      // 不过滤模型，显示所有可用模型
+      const allModels = data.data
 
       // 转换为选项格式
-      modelOptions.value = visionModels.map((model: any) => ({
+      modelOptions.value = allModels.map((model: any) => ({
         value: model.id,
         label: formatModelName(model.id),
         description: model.description || ''
@@ -135,12 +147,14 @@ const fetchModels = async () => {
     console.error('获取模型列表失败:', error)
     modelError.value = `获取模型列表失败: ${error}`
 
-    // 使用默认模型列表
+    // 使用默认模型列表（包含所有类型的模型）
     modelOptions.value = [
       { value: 'gpt-4-vision-preview', label: 'GPT-4 Vision Preview' },
       { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
       { value: 'gpt-4o', label: 'GPT-4o' },
-      { value: 'gpt-4o-mini', label: 'GPT-4o Mini' }
+      { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+      { value: 'gpt-4', label: 'GPT-4' },
+      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' }
     ]
   } finally {
     loadingModels.value = false
@@ -154,60 +168,155 @@ const formatModelName = (modelId: string) => {
     'gpt-4-turbo': 'GPT-4 Turbo',
     'gpt-4o': 'GPT-4o',
     'gpt-4o-mini': 'GPT-4o Mini',
-    'gpt-4': 'GPT-4'
+    'gpt-4': 'GPT-4',
+    'gpt-3.5-turbo': 'GPT-3.5 Turbo'
   }
 
   return nameMap[modelId] || modelId
+}
+
+// 检查是否为视觉模型
+const isVisionModel = (modelId: string) => {
+  const visionModels = [
+    'gpt-4-vision-preview',
+    'gpt-4-turbo',
+    'gpt-4o',
+    'gpt-4o-mini'
+  ]
+
+  return visionModels.some(vm => modelId.includes(vm))
+}
+
+// 对话框辅助函数
+const showDialog = (options: {
+  title?: string
+  message: string
+  type?: 'info' | 'success' | 'warning' | 'error' | 'confirm'
+  showCancel?: boolean
+  onConfirm?: () => void
+  onCancel?: () => void
+}) => {
+  dialog.value = {
+    show: true,
+    title: options.title || '',
+    message: options.message,
+    type: options.type || 'info',
+    showCancel: options.showCancel || false,
+    onConfirm: options.onConfirm || (() => {}),
+    onCancel: options.onCancel || (() => {})
+  }
+}
+
+const hideDialog = () => {
+  dialog.value.show = false
 }
 
 const saveConfig = async () => {
   try {
     saving.value = true
     await UpdateConfig(config.value)
-    alert('配置保存成功')
+    showDialog({
+      title: '保存成功',
+      message: '配置已成功保存',
+      type: 'success'
+    })
   } catch (error) {
     console.error('保存配置失败:', error)
-    alert('保存配置失败: ' + error)
+    showDialog({
+      title: '保存失败',
+      message: `保存配置失败: ${error}`,
+      type: 'error'
+    })
   } finally {
     saving.value = false
   }
 }
 
 const resetToDefaults = () => {
-  if (confirm('确定要重置为默认配置吗？')) {
-    config.value = {
-      ai: {
-        base_url: 'https://api.openai.com/v1',
-        api_key: '',
-        model: 'gpt-4-vision-preview',
-        timeout: 30,
-        request_interval: 1.0,
-        burst_limit: 3,
-        max_retries: 3,
-        retry_delay: 1
-      },
-      storage: {
-        cache_ttl: '24h',
-        max_cache_size: '2GB',
-        history_retention: '30d'
-      },
-      ui: {
-        theme: 'light',
-        default_font: 'system',
-        layout: 'split'
+  showDialog({
+    title: '重置配置',
+    message: '确定要重置为默认配置吗？此操作将清除所有当前设置。',
+    type: 'confirm',
+    showCancel: true,
+    onConfirm: () => {
+      config.value = {
+        ai: {
+          base_url: 'https://api.openai.com/v1',
+          api_key: '',
+          model: 'gpt-4-vision-preview',
+          ocr_model: 'gpt-4-vision-preview',
+          text_model: 'gpt-4',
+          timeout: 30,
+          request_interval: 1.0,
+          burst_limit: 3,
+          max_retries: 3,
+          retry_delay: 1
+        },
+        storage: {
+          cache_ttl: '24h',
+          max_cache_size: '2GB',
+          history_retention: '30d'
+        },
+        ui: {
+          theme: 'light',
+          default_font: 'system',
+          layout: 'split'
+        }
       }
+      showDialog({
+        title: '重置成功',
+        message: '配置已重置为默认值',
+        type: 'success'
+      })
     }
-  }
+  })
 }
 
 const testConnection = async () => {
   if (!config.value.ai.api_key) {
-    alert('请先输入API Key')
+    showDialog({
+      title: '配置不完整',
+      message: '请先输入API Key',
+      type: 'warning'
+    })
     return
   }
-  
-  // 这里可以添加测试连接的逻辑
-  alert('连接测试功能待实现')
+
+  if (!config.value.ai.base_url) {
+    showDialog({
+      title: '配置不完整',
+      message: '请先输入API Base URL',
+      type: 'warning'
+    })
+    return
+  }
+
+  try {
+    // 测试连接
+    const response = await fetch(`${config.value.ai.base_url}/models`, {
+      headers: {
+        'Authorization': `Bearer ${config.value.ai.api_key}`,
+        'Content-Type': 'application/json'
+      }
+    })
+
+    if (response.ok) {
+      showDialog({
+        title: '连接成功',
+        message: 'API连接测试成功，可以正常使用',
+        type: 'success'
+      })
+    } else {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+  } catch (error) {
+    console.error('连接测试失败:', error)
+    showDialog({
+      title: '连接失败',
+      message: `连接测试失败: ${error}`,
+      type: 'error'
+    })
+  }
 }
 
 const close = () => {
@@ -264,12 +373,13 @@ const close = () => {
               </small>
             </div>
 
+            <!-- OCR识别模型 -->
             <div class="form-group">
-              <label for="model">AI模型:</label>
+              <label for="ocr-model">OCR识别模型:</label>
               <div class="model-select-container">
                 <select
-                  id="model"
-                  v-model="config.ai.model"
+                  id="ocr-model"
+                  v-model="config.ai.ocr_model"
                   class="form-select"
                   :disabled="loadingModels"
                 >
@@ -277,6 +387,7 @@ const close = () => {
                   <option v-else-if="modelOptions.length === 0" value="">请先配置API信息</option>
                   <option v-for="option in modelOptions" :key="option.value" :value="option.value">
                     {{ option.label }}
+                    <span v-if="isVisionModel(option.value)" class="model-badge">📷 视觉</span>
                   </option>
                 </select>
                 <button
@@ -291,7 +402,28 @@ const close = () => {
               </div>
               <small v-if="modelError" class="form-error">{{ modelError }}</small>
               <small v-else class="form-help">
-                自动从API获取可用模型列表，优先显示支持视觉的模型
+                用于图片OCR识别，建议选择支持视觉的模型（如GPT-4 Vision）
+              </small>
+            </div>
+
+            <!-- 文本处理模型 -->
+            <div class="form-group">
+              <label for="text-model">文本处理模型:</label>
+              <select
+                id="text-model"
+                v-model="config.ai.text_model"
+                class="form-select"
+                :disabled="loadingModels"
+              >
+                <option v-if="loadingModels" value="">加载模型列表中...</option>
+                <option v-else-if="modelOptions.length === 0" value="">请先配置API信息</option>
+                <option v-for="option in modelOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                  <span v-if="!isVisionModel(option.value)" class="model-badge">💬 文本</span>
+                </option>
+              </select>
+              <small class="form-help">
+                用于AI文本处理（纠错、总结、翻译等），可选择文本专用模型以降低成本
               </small>
             </div>
 
@@ -470,6 +602,18 @@ const close = () => {
         </div>
       </div>
     </div>
+
+    <!-- 自定义对话框 -->
+    <CustomDialog
+      :show="dialog.show"
+      :title="dialog.title"
+      :message="dialog.message"
+      :type="dialog.type"
+      :show-cancel="dialog.showCancel"
+      @confirm="dialog.onConfirm"
+      @cancel="dialog.onCancel"
+      @close="hideDialog"
+    />
   </div>
 </template>
 
@@ -828,5 +972,15 @@ const close = () => {
   background: rgba(102, 126, 234, 0.1);
   border-color: rgba(102, 126, 234, 0.5);
   transform: translateY(-1px);
+}
+
+.model-badge {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  margin-left: 0.5rem;
+  font-weight: 500;
+  background: rgba(0, 123, 255, 0.1);
+  color: #007bff;
 }
 </style>

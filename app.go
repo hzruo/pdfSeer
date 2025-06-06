@@ -516,6 +516,10 @@ func (a *App) loadFromCache(documentID string) error {
 			if cachedPage.AIText != "" {
 				page.AIText = cachedPage.AIText
 			}
+			if cachedPage.OriginalText != "" {
+				page.Text = cachedPage.OriginalText
+				page.HasText = true
+			}
 		}
 	}
 
@@ -628,6 +632,22 @@ func (a *App) processWithAI(pageNumbers []int, prompt string) {
 	if err != nil {
 		runtime.EventsEmit(a.ctx, "ai-processing-error", fmt.Sprintf("AI处理失败: %v", err))
 		return
+	}
+
+	// 更新页面AI处理结果并保存到缓存
+	for _, pageNum := range pageNumbers {
+		if pageNum < 1 || pageNum > len(doc.Pages) {
+			continue
+		}
+
+		// 更新页面AI处理结果
+		a.pdfProcessor.UpdatePageAI(doc, pageNum, result)
+
+		// 保存到缓存（保持现有的OCR文本，只更新AI文本）
+		page := doc.Pages[pageNum-1]
+		if err := a.savePageToCache(pageNum, page.OCRText, result); err != nil {
+			log.Printf("保存AI处理结果到缓存失败: %v", err)
+		}
 	}
 
 	// 发送结果
@@ -885,6 +905,47 @@ func (a *App) UpdatePageText(pageNumber int, textType string, text string) error
 	return nil
 }
 
+// ExtractNativeText 按需提取页面原生文本
+func (a *App) ExtractNativeText(pageNumber int) (string, error) {
+	a.mu.RLock()
+	doc := a.currentDoc
+	a.mu.RUnlock()
+
+	if doc == nil {
+		return "", fmt.Errorf("未加载PDF文档")
+	}
+
+	if pageNumber < 1 || pageNumber > len(doc.Pages) {
+		return "", fmt.Errorf("页码超出范围")
+	}
+
+	page := doc.Pages[pageNumber-1]
+
+	// 如果已经提取过，直接返回
+	if page.Text != "" {
+		return page.Text, nil
+	}
+
+	// 使用PDF处理器提取原生文本
+	text, hasText, err := a.pdfProcessor.ExtractNativeText(doc.FilePath, pageNumber)
+	if err != nil {
+		return "", fmt.Errorf("提取原生文本失败: %w", err)
+	}
+
+	// 更新页面信息
+	a.mu.Lock()
+	page.Text = text
+	page.HasText = hasText
+	a.mu.Unlock()
+
+	// 更新缓存
+	if err := a.savePageToCache(pageNumber, page.OCRText, page.AIText); err != nil {
+		log.Printf("更新缓存失败: %v", err)
+	}
+
+	return text, nil
+}
+
 // processPagesConcurrently 并发处理页面
 func (a *App) processPagesConcurrently(pageNumbers []int, historyRecord *history.HistoryRecord, doc *pdf.PDFDocument, forceReprocess bool) int {
 	const maxConcurrency = 3 // 限制并发数以避免API限制
@@ -959,6 +1020,9 @@ func (a *App) processPageWithResult(pageNum int, historyRecord *history.HistoryR
 			if cached.AIText != "" {
 				a.pdfProcessor.UpdatePageAI(doc, pageNum, cached.AIText)
 			}
+			if cached.OriginalText != "" {
+				a.pdfProcessor.UpdatePageText(doc, pageNum, cached.OriginalText)
+			}
 
 			// 即使从缓存加载，也要保存到历史记录
 			if historyRecord != nil {
@@ -1011,6 +1075,11 @@ func (a *App) processPageWithResult(pageNum int, historyRecord *history.HistoryR
 // GetSupportedFormats 获取支持的文档格式
 func (a *App) GetSupportedFormats() []string {
 	return a.documentProcessor.GetSupportedFormats()
+}
+
+// GetAppVersion 获取应用版本信息
+func (a *App) GetAppVersion() map[string]string {
+	return GetAppInfo()
 }
 
 // GetDocumentInfo 获取文档信息

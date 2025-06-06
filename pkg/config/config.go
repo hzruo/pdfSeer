@@ -12,7 +12,9 @@ import (
 type AIConfig struct {
 	BaseURL         string  `json:"base_url"`
 	APIKey          string  `json:"api_key"`
-	Model           string  `json:"model"`
+	Model           string  `json:"model"`            // 保持向后兼容，默认OCR模型
+	OCRModel        string  `json:"ocr_model"`        // OCR识别专用模型
+	TextModel       string  `json:"text_model"`       // 文本处理专用模型
 	Timeout         int     `json:"timeout"`
 	RequestInterval float64 `json:"request_interval"`
 	BurstLimit      int     `json:"burst_limit"`
@@ -49,7 +51,7 @@ func NewConfigManager() (*ConfigManager, error) {
 		return nil, fmt.Errorf("获取用户目录失败: %w", err)
 	}
 
-	configDir := filepath.Join(homeDir, ".pdf-ocr-ai")
+	configDir := filepath.Join(homeDir, ".pdfSeer")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, fmt.Errorf("创建配置目录失败: %w", err)
 	}
@@ -77,7 +79,9 @@ func (cm *ConfigManager) Load() error {
 	cm.config = AppConfig{
 		AI: AIConfig{
 			BaseURL:         "https://api.openai.com/v1",
-			Model:           "gpt-4-vision-preview",
+			Model:           "gpt-4-vision-preview", // 保持向后兼容
+			OCRModel:        "gpt-4-vision-preview", // OCR默认使用视觉模型
+			TextModel:       "gpt-4",                // 文本处理默认使用GPT-4
 			Timeout:         30,
 			RequestInterval: 1.0,
 			BurstLimit:      3,

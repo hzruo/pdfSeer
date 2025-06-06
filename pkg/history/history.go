@@ -29,21 +29,21 @@ type HistoryRecord struct {
 	Status       ProcessingStatus `db:"status" json:"status"`
 	AIModel      string           `db:"ai_model" json:"ai_model"`
 	Cost         float64          `db:"cost" json:"cost"`
-	ProcessedAt  time.Time        `db:"processed_at" json:"processed_at"`
-	CompletedAt  *time.Time       `db:"completed_at" json:"completed_at,omitempty"`
+	ProcessedAt  string           `db:"processed_at" json:"processed_at"`
+	CompletedAt  *string          `db:"completed_at" json:"completed_at,omitempty"`
 	ErrorMessage *string          `db:"error_message" json:"error_message,omitempty"`
 }
 
 // HistoryPage 历史页面
 type HistoryPage struct {
-	ID               int       `db:"id" json:"id"`
-	HistoryID        int       `db:"history_id" json:"history_id"`
-	PageNumber       int       `db:"page_number" json:"page_number"`
-	OriginalText     string    `db:"original_text" json:"original_text"`
-	OCRText          string    `db:"ocr_text" json:"ocr_text"`
-	AIProcessedText  string    `db:"ai_processed_text" json:"ai_processed_text"`
-	ProcessingTime   float64   `db:"processing_time" json:"processing_time"` // 处理时间（秒）
-	CreatedAt        time.Time `db:"created_at" json:"created_at"`
+	ID               int     `db:"id" json:"id"`
+	HistoryID        int     `db:"history_id" json:"history_id"`
+	PageNumber       int     `db:"page_number" json:"page_number"`
+	OriginalText     string  `db:"original_text" json:"original_text"`
+	OCRText          string  `db:"ocr_text" json:"ocr_text"`
+	AIProcessedText  string  `db:"ai_processed_text" json:"ai_processed_text"`
+	ProcessingTime   float64 `db:"processing_time" json:"processing_time"` // 处理时间（秒）
+	CreatedAt        string  `db:"created_at" json:"created_at"`
 }
 
 // SearchResult 搜索结果
@@ -53,7 +53,7 @@ type SearchResult struct {
 	DocumentName string `json:"document_name"`
 	PageNumber   int    `json:"page_number"`
 	Snippet      string `json:"snippet"`
-	ProcessedAt  time.Time `json:"processed_at"`
+	ProcessedAt  string `json:"processed_at"`
 }
 
 // HistoryManager 历史记录管理器
@@ -71,7 +71,7 @@ func NewHistoryManager() (*HistoryManager, error) {
 	}
 
 	// 创建数据目录
-	dataDir := filepath.Join(homeDir, ".pdf-ocr-ai")
+	dataDir := filepath.Join(homeDir, ".pdfSeer")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}
@@ -411,11 +411,11 @@ func (hm *HistoryManager) DeleteRecord(id int) error {
 
 // CleanupOldRecords 清理旧记录
 func (hm *HistoryManager) CleanupOldRecords(days int) error {
-	cutoff := time.Now().AddDate(0, 0, -days)
-	
+	cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+
 	// 获取要删除的记录ID
 	var recordIDs []int
-	err := hm.db.Select(&recordIDs, 
+	err := hm.db.Select(&recordIDs,
 		"SELECT id FROM processing_history WHERE processed_at < ?", cutoff)
 	if err != nil {
 		return err

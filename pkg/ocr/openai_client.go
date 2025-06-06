@@ -68,11 +68,17 @@ func (c *OpenAIClient) RecognizeImage(ctx context.Context, imagePath string) (*O
 	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(c.config.Timeout)*time.Second)
 	defer cancel()
 
+	// 获取OCR专用模型，如果没有配置则使用默认模型
+	ocrModel := c.config.OCRModel
+	if ocrModel == "" {
+		ocrModel = c.config.Model
+	}
+
 	// 根据模型类型构建不同的请求
-	if c.isVisionModel(c.config.Model) {
-		return c.recognizeWithVision(timeoutCtx, base64Image)
+	if c.isVisionModel(ocrModel) {
+		return c.recognizeWithVision(timeoutCtx, base64Image, ocrModel)
 	} else {
-		return c.recognizeWithText(timeoutCtx, imagePath)
+		return c.recognizeWithText(timeoutCtx, imagePath, ocrModel)
 	}
 }
 
@@ -94,10 +100,10 @@ func (c *OpenAIClient) isVisionModel(model string) bool {
 }
 
 // recognizeWithVision 使用视觉模型识别
-func (c *OpenAIClient) recognizeWithVision(ctx context.Context, base64Image string) (*OCRResult, error) {
+func (c *OpenAIClient) recognizeWithVision(ctx context.Context, base64Image string, model string) (*OCRResult, error) {
 	// 构建请求
 	req := openai.ChatCompletionRequest{
-		Model: c.config.Model,
+		Model: model,
 		Messages: []openai.ChatCompletionMessage{
 			{
 				Role: openai.ChatMessageRoleSystem,
@@ -163,13 +169,13 @@ func (c *OpenAIClient) recognizeWithVision(ctx context.Context, base64Image stri
 }
 
 // recognizeWithText 使用文本模型识别（需要先用其他OCR引擎）
-func (c *OpenAIClient) recognizeWithText(ctx context.Context, imagePath string) (*OCRResult, error) {
+func (c *OpenAIClient) recognizeWithText(ctx context.Context, imagePath string, model string) (*OCRResult, error) {
 	// 对于非视觉模型，返回提示信息
 	return &OCRResult{
 		Text:       "此模型不支持图片识别，请使用支持视觉的模型如 gpt-4-vision-preview",
 		Confidence: 0.0,
 		Error:      "模型不支持视觉功能",
-	}, fmt.Errorf("模型 %s 不支持图片识别", c.config.Model)
+	}, fmt.Errorf("模型 %s 不支持图片识别", model)
 }
 
 // GetSupportedModels 获取支持的模型列表
@@ -272,9 +278,18 @@ func (c *OpenAIClient) ProcessWithAI(ctx context.Context, text string, prompt st
 	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(c.config.Timeout)*time.Second)
 	defer cancel()
 
+	// 获取文本处理专用模型，如果没有配置则使用默认模型
+	textModel := c.config.TextModel
+	if textModel == "" {
+		textModel = c.config.Model
+	}
+	if textModel == "" {
+		textModel = "gpt-4" // 最后的备选方案
+	}
+
 	// 构建请求
 	req := openai.ChatCompletionRequest{
-		Model: "gpt-4", // 文本处理使用GPT-4
+		Model: textModel, // 使用配置的文本处理模型
 		Messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,

@@ -50,7 +50,7 @@ func NewCacheManager() (*CacheManager, error) {
 	}
 
 	// 创建数据目录
-	dataDir := filepath.Join(homeDir, ".pdf-ocr-ai")
+	dataDir := filepath.Join(homeDir, ".pdfSeer")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}

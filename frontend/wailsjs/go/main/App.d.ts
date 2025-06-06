@@ -15,6 +15,10 @@ export function ExportProcessingResults(arg1:string):Promise<string>;
 
 export function ExportText(arg1:Array<number>,arg2:string):Promise<string>;
 
+export function ExtractNativeText(arg1:number):Promise<string>;
+
+export function GetAppVersion():Promise<Record<string, string>>;
+
 export function GetConfig():Promise<config.AppConfig>;
 
 export function GetCurrentDocument():Promise<pdf.PDFDocument>;

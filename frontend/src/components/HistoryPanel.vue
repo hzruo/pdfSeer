@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { GetHistoryRecords, GetHistoryPages, SearchHistory, SaveFileWithDialog, SaveBinaryFileWithDialog, GetDocumentHistoryPages, DeleteHistoryRecord } from '../../wailsjs/go/main/App'
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from 'docx'
+import { renderMarkdown, hasMarkdownSyntax } from '../utils/markdown'
 
 // Emits
 const emit = defineEmits<{
@@ -254,6 +255,22 @@ const truncateText = (text: string, maxLength: number = 100) => {
 
 const close = () => {
   emit('close')
+}
+
+// 渲染AI处理结果的markdown
+const renderAIProcessedText = (text: string) => {
+  if (!text) return ''
+
+  // 检测是否包含markdown语法，如果包含则渲染，否则保持原样
+  if (hasMarkdownSyntax(text)) {
+    return renderMarkdown(text)
+  }
+
+  // 对于纯文本，保持换行并转义HTML
+  return text.replace(/&/g, '&amp;')
+             .replace(/</g, '&lt;')
+             .replace(/>/g, '&gt;')
+             .replace(/\n/g, '<br>')
 }
 
 // 导出历史记录
@@ -1154,7 +1171,7 @@ const debouncedSearch = () => {
                     <!-- AI处理文本 -->
                     <div v-if="page.ai_processed_text" class="text-section">
                       <h6>AI处理:</h6>
-                      <div class="text-content">{{ page.ai_processed_text }}</div>
+                      <div class="markdown-content" v-html="renderAIProcessedText(page.ai_processed_text)"></div>
                     </div>
                   </div>
                 </div>
@@ -1651,6 +1668,99 @@ const debouncedSearch = () => {
   white-space: pre-wrap;
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* Markdown内容样式覆盖 */
+.markdown-content {
+  white-space: normal !important;
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  max-height: 200px;
+  overflow-y: auto;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin: 0.8em 0 0.3em 0;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #2c3e50;
+}
+
+.markdown-content h1 { font-size: 1.4em; }
+.markdown-content h2 { font-size: 1.2em; }
+.markdown-content h3 { font-size: 1.1em; }
+.markdown-content h4 { font-size: 1em; }
+.markdown-content h5,
+.markdown-content h6 { font-size: 0.9em; }
+
+.markdown-content p {
+  margin: 0.5em 0;
+  line-height: 1.4;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-content li {
+  margin: 0.2em 0;
+  line-height: 1.3;
+}
+
+.markdown-content code {
+  background: #e9ecef;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8em;
+  color: #d63384;
+}
+
+.markdown-content pre {
+  background: #e9ecef;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 0.5em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.markdown-content pre code {
+  background: none;
+  padding: 0;
+  color: #333;
+}
+
+.markdown-content blockquote {
+  margin: 0.5em 0;
+  padding: 0.3em 0.5em;
+  border-left: 3px solid #ddd;
+  background: #f1f3f4;
+  color: #666;
+  font-style: italic;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.markdown-content em {
+  font-style: italic;
+  color: #555;
 }
 
 /* 页面列表样式 */
