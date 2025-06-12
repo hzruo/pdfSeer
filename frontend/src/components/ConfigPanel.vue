@@ -63,6 +63,31 @@ const customConfig = ref({
 // 标记是否已经有真正的自定义配置
 const hasRealCustomConfig = ref(false)
 
+// 自定义配置管理
+const savedConfigs = ref<Array<{
+  id: string
+  name: string
+  base_url: string
+  models_endpoint: string
+  chat_endpoint: string
+  api_key: string
+  ocr_model: string
+  text_model: string
+  created_at: string
+}>>([])
+
+// 保存配置对话框状态
+const showSaveConfigDialog = ref(false)
+const configName = ref('')
+const savingConfig = ref(false)
+
+// 配置管理对话框状态
+const showConfigManagerDialog = ref(false)
+
+// 删除配置确认对话框
+const showDeleteConfirm = ref(false)
+const configToDelete = ref('')
+
 // 主题选项
 const themeOptions = [
   { value: 'light', label: '浅色主题' },
@@ -116,6 +141,9 @@ const dialog = ref({
 onMounted(async () => {
   // 优先加载配置，不等待依赖检测
   await loadConfig()
+
+  // 加载保存的自定义配置
+  loadSavedConfigs()
 
   // 异步加载依赖状态，不阻塞页面显示
   setTimeout(() => {
@@ -530,6 +558,13 @@ const applyPreset = (event: Event) => {
 
     if (!presetName) return
 
+    // 检查是否是自定义保存的配置
+    if (presetName.startsWith('custom_')) {
+      const configId = presetName.replace('custom_', '')
+      loadCustomConfig(configId)
+      return
+    }
+
     if (presetName === '自定义配置') {
       // 立即重置标记，确保界面能正常更新
       applyingPreset.value = false
@@ -644,6 +679,172 @@ const applyPreset = (event: Event) => {
   }
 }
 
+// 自定义配置管理方法
+const loadSavedConfigs = () => {
+  try {
+    const saved = localStorage.getItem('ai_custom_configs')
+    if (saved) {
+      savedConfigs.value = JSON.parse(saved)
+    }
+  } catch (error) {
+    console.error('加载自定义配置失败:', error)
+  }
+}
+
+const saveSavedConfigs = () => {
+  try {
+    localStorage.setItem('ai_custom_configs', JSON.stringify(savedConfigs.value))
+  } catch (error) {
+    console.error('保存自定义配置失败:', error)
+  }
+}
+
+const openSaveConfigDialog = () => {
+  if (!config.value.ai.base_url) {
+    showDialog({
+      title: '配置不完整',
+      message: '请先配置API Base URL',
+      type: 'warning'
+    })
+    return
+  }
+
+  configName.value = ''
+  showSaveConfigDialog.value = true
+}
+
+const openConfigManagerDialog = () => {
+  showConfigManagerDialog.value = true
+}
+
+const saveCustomConfig = async () => {
+  if (!configName.value.trim()) {
+    showDialog({
+      title: '配置名称不能为空',
+      message: '请输入配置名称',
+      type: 'warning'
+    })
+    return
+  }
+
+  // 检查名称是否已存在
+  const existingConfig = savedConfigs.value.find(c => c.name === configName.value.trim())
+  if (existingConfig) {
+    showDialog({
+      title: '配置名称已存在',
+      message: '请使用不同的配置名称',
+      type: 'warning'
+    })
+    return
+  }
+
+  try {
+    savingConfig.value = true
+
+    const newConfig = {
+      id: Date.now().toString(),
+      name: configName.value.trim(),
+      base_url: config.value.ai.base_url,
+      models_endpoint: config.value.ai.models_endpoint || '/models',
+      chat_endpoint: config.value.ai.chat_endpoint || '/chat/completions',
+      api_key: config.value.ai.api_key,
+      ocr_model: config.value.ai.ocr_model || '',
+      text_model: config.value.ai.text_model || '',
+      created_at: new Date().toISOString()
+    }
+
+    savedConfigs.value.push(newConfig)
+    saveSavedConfigs()
+
+    showSaveConfigDialog.value = false
+    configName.value = ''
+
+    showDialog({
+      title: '保存成功',
+      message: `配置"${newConfig.name}"已保存`,
+      type: 'success'
+    })
+  } catch (error) {
+    console.error('保存配置失败:', error)
+    showDialog({
+      title: '保存失败',
+      message: `保存配置失败: ${error}`,
+      type: 'error'
+    })
+  } finally {
+    savingConfig.value = false
+  }
+}
+
+const loadCustomConfig = (configId: string) => {
+  const savedConfig = savedConfigs.value.find(c => c.id === configId)
+  if (!savedConfig) return
+
+  // 标记正在应用预设，避免触发watch
+  applyingPreset.value = true
+
+  try {
+    config.value.ai.base_url = savedConfig.base_url
+    config.value.ai.models_endpoint = savedConfig.models_endpoint
+    config.value.ai.chat_endpoint = savedConfig.chat_endpoint
+    config.value.ai.api_key = savedConfig.api_key
+    config.value.ai.ocr_model = savedConfig.ocr_model
+    config.value.ai.text_model = savedConfig.text_model
+
+    selectedPreset.value = `custom_${configId}`
+
+    // 清空模型列表和错误信息
+    modelOptions.value = []
+    modelError.value = ''
+
+    console.log('加载自定义配置:', savedConfig)
+
+    // 如果有API Key和Base URL，自动获取模型列表
+    if (savedConfig.api_key && savedConfig.base_url) {
+      setTimeout(() => {
+        fetchModels()
+      }, 100)
+    }
+  } finally {
+    setTimeout(() => {
+      applyingPreset.value = false
+    }, 200)
+  }
+}
+
+const confirmDeleteConfig = (configId: string) => {
+  const configToDeleteObj = savedConfigs.value.find(c => c.id === configId)
+  if (!configToDeleteObj) return
+
+  showDialog({
+    title: '删除配置',
+    message: `确定要删除配置"${configToDeleteObj.name}"吗？此操作不可撤销。`,
+    type: 'confirm',
+    showCancel: true,
+    onConfirm: () => deleteCustomConfig(configId)
+  })
+}
+
+const deleteCustomConfig = (configId: string) => {
+  const index = savedConfigs.value.findIndex(c => c.id === configId)
+  if (index === -1) return
+
+  const deletedConfig = savedConfigs.value[index]
+  savedConfigs.value.splice(index, 1)
+  saveSavedConfigs()
+
+  // 如果当前选择的是被删除的配置，重置选择
+  if (selectedPreset.value === `custom_${configId}`) {
+    selectedPreset.value = ''
+  }
+
+  showDialog({
+    title: '删除成功',
+    message: `配置"${deletedConfig.name}"已删除`,
+    type: 'success'
+  })
+}
+
 const close = () => {
   emit('close')
 }
@@ -673,19 +874,52 @@ const close = () => {
             <!-- 预设模板选择 -->
             <div class="form-group">
               <label for="api-preset">API服务预设:</label>
-              <select
-                id="api-preset"
-                v-model="selectedPreset"
-                @change="applyPreset"
-                class="form-select"
-              >
-                <option value="">选择预设模板...</option>
-                <option v-for="preset in apiPresets" :key="preset.name" :value="preset.name">
-                  {{ preset.name }}
-                </option>
-              </select>
+              <div class="preset-container">
+                <select
+                  id="api-preset"
+                  v-model="selectedPreset"
+                  @change="applyPreset"
+                  class="form-select"
+                >
+                  <option value="">选择预设模板...</option>
+
+                  <!-- 内置预设 -->
+                  <optgroup label="内置预设">
+                    <option v-for="preset in apiPresets" :key="preset.name" :value="preset.name">
+                      {{ preset.name }}
+                    </option>
+                  </optgroup>
+
+                  <!-- 自定义配置 -->
+                  <optgroup v-if="savedConfigs.length > 0" label="我的配置">
+                    <option v-for="config in savedConfigs" :key="config.id" :value="`custom_${config.id}`">
+                      {{ config.name }}
+                    </option>
+                  </optgroup>
+                </select>
+
+                <div class="preset-actions">
+                  <button
+                    @click="openSaveConfigDialog"
+                    class="action-btn save-btn"
+                    :title="config.ai.base_url ? '保存当前配置为自定义预设' : '请先配置API信息后再保存'"
+                    :disabled="!config.ai.base_url"
+                  >
+                    💾
+                  </button>
+
+                  <button
+                    v-if="savedConfigs.length > 0"
+                    @click="openConfigManagerDialog"
+                    class="action-btn manage-btn"
+                    title="管理我的配置"
+                  >
+                    ⚙️
+                  </button>
+                </div>
+              </div>
               <small class="form-help">
-                选择常用的API服务预设，或选择"自定义配置"手动设置
+                选择常用的API服务预设，💾保存当前配置，⚙️管理已保存的配置
               </small>
             </div>
 
@@ -1046,6 +1280,115 @@ const close = () => {
       </div>
     </div>
 
+    <!-- 保存配置对话框 -->
+    <div v-if="showSaveConfigDialog" class="dialog-overlay" @click="showSaveConfigDialog = false">
+      <div class="dialog-content save-config-dialog" @click.stop>
+        <div class="dialog-header">
+          <h4>💾 保存配置</h4>
+          <button @click="showSaveConfigDialog = false" class="close-btn">×</button>
+        </div>
+
+        <div class="dialog-body">
+          <div class="form-group">
+            <label for="config-name">配置名称:</label>
+            <input
+              id="config-name"
+              v-model="configName"
+              type="text"
+              placeholder="例如：我的OpenAI配置"
+              class="form-input"
+              @keyup.enter="saveCustomConfig"
+              autofocus
+            />
+            <small class="form-help">
+              为此配置起一个便于识别的名称
+            </small>
+          </div>
+
+          <div class="config-preview">
+            <h5>配置预览:</h5>
+            <div class="preview-item">
+              <strong>Base URL:</strong> {{ config.ai.base_url }}
+            </div>
+            <div class="preview-item">
+              <strong>OCR模型:</strong> {{ config.ai.ocr_model || '未设置' }}
+            </div>
+            <div class="preview-item">
+              <strong>文本模型:</strong> {{ config.ai.text_model || '未设置' }}
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-footer">
+          <button @click="showSaveConfigDialog = false" class="btn btn-secondary">取消</button>
+          <button
+            @click="saveCustomConfig"
+            :disabled="!configName.trim() || savingConfig"
+            class="btn btn-primary"
+          >
+            {{ savingConfig ? '保存中...' : '保存' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 配置管理对话框 -->
+    <div v-if="showConfigManagerDialog" class="dialog-overlay" @click="showConfigManagerDialog = false">
+      <div class="dialog-content config-manager-dialog" @click.stop>
+        <div class="dialog-header">
+          <h4>⚙️ 管理我的配置</h4>
+          <button @click="showConfigManagerDialog = false" class="close-btn">×</button>
+        </div>
+
+        <div class="dialog-body">
+          <div v-if="savedConfigs.length === 0" class="empty-state">
+            <div class="empty-icon">📋</div>
+            <p>还没有保存的配置</p>
+            <small>配置好API信息后，点击💾按钮保存配置</small>
+          </div>
+
+          <div v-else class="custom-configs-list">
+            <div v-for="savedConfig in savedConfigs" :key="savedConfig.id" class="custom-config-item">
+              <div class="config-info">
+                <div class="config-name">{{ savedConfig.name }}</div>
+                <div class="config-details">
+                  <span class="config-url">{{ savedConfig.base_url }}</span>
+                  <span class="config-date">{{ new Date(savedConfig.created_at).toLocaleDateString() }}</span>
+                </div>
+                <div class="config-models">
+                  <span v-if="savedConfig.ocr_model" class="model-tag">OCR: {{ savedConfig.ocr_model }}</span>
+                  <span v-if="savedConfig.text_model" class="model-tag">文本: {{ savedConfig.text_model }}</span>
+                </div>
+              </div>
+              <div class="config-actions">
+                <button
+                  @click="loadCustomConfig(savedConfig.id); showConfigManagerDialog = false"
+                  class="btn-small btn-primary"
+                  title="加载此配置"
+                >
+                  加载
+                </button>
+                <button
+                  @click="confirmDeleteConfig(savedConfig.id)"
+                  class="btn-small btn-danger"
+                  title="删除此配置"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-footer">
+          <div class="footer-info">
+            <small>共 {{ savedConfigs.length }} 个配置</small>
+          </div>
+          <button @click="showConfigManagerDialog = false" class="btn btn-secondary">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 自定义对话框 -->
     <CustomDialog
       :show="dialog.show"
@@ -1093,6 +1436,7 @@ const close = () => {
   flex-direction: column;
   border: 1px solid rgba(255, 255, 255, 0.2);
   animation: slideIn 0.3s ease;
+  position: relative;
 }
 
 @keyframes slideIn {
@@ -1605,5 +1949,397 @@ const close = () => {
   font-size: 0.8rem;
   color: #495057;
   word-break: break-all;
+}
+
+/* 预设容器样式 */
+.preset-container {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.preset-container .form-select {
+  flex: 1;
+}
+
+.preset-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.action-btn {
+  background: rgba(102, 126, 234, 0.1);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  border-radius: 8px;
+  padding: 0.75rem;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+  min-width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #667eea;
+  position: relative;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: rgba(102, 126, 234, 0.2);
+  border-color: rgba(102, 126, 234, 0.5);
+  transform: translateY(-1px);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.save-btn:hover:not(:disabled) {
+  background: rgba(40, 167, 69, 0.1);
+  border-color: rgba(40, 167, 69, 0.3);
+  color: #28a745;
+}
+
+.manage-btn:hover:not(:disabled) {
+  background: rgba(255, 193, 7, 0.1);
+  border-color: rgba(255, 193, 7, 0.3);
+  color: #ffc107;
+}
+
+/* 配置管理对话框样式 */
+.config-manager-dialog {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  width: 90%;
+  max-width: 700px;
+  max-height: 80vh;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: slideIn 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.config-manager-dialog .dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+  border-radius: 12px 12px 0 0;
+}
+
+.config-manager-dialog .dialog-header h4 {
+  margin: 0;
+  color: #333;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.config-manager-dialog .dialog-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+  min-height: 0;
+  max-height: 60vh;
+}
+
+.config-manager-dialog .dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(248, 249, 250, 0.8);
+  border-radius: 0 0 12px 12px;
+}
+
+.config-manager-dialog .close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #666;
+  padding: 0.25rem;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.config-manager-dialog .close-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 2rem;
+  color: #666;
+}
+
+.empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.empty-state p {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.empty-state small {
+  color: #999;
+  font-size: 0.9rem;
+}
+
+.custom-configs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.custom-config-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  margin-bottom: 0.75rem;
+}
+
+.custom-config-item:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(102, 126, 234, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.config-info {
+  flex: 1;
+  margin-right: 1rem;
+}
+
+.config-name {
+  font-weight: 600;
+  color: #333;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.config-name::before {
+  content: '🔧';
+  font-size: 0.9rem;
+}
+
+.config-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+
+.config-url {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  background: rgba(102, 126, 234, 0.1);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  color: #667eea;
+  font-weight: 500;
+  display: inline-block;
+}
+
+.config-date {
+  color: #999;
+  font-size: 0.8rem;
+}
+
+.config-models {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.model-tag {
+  background: rgba(40, 167, 69, 0.1);
+  color: #28a745;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid rgba(40, 167, 69, 0.2);
+}
+
+.config-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.btn-small {
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  min-width: 60px;
+  white-space: nowrap;
+}
+
+.btn-small.btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+}
+
+.btn-small.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-small.btn-danger {
+  background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.2);
+}
+
+.btn-small.btn-danger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+}
+
+/* 保存配置对话框样式 */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fadeIn 0.3s ease;
+}
+
+.save-config-dialog {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  width: 90%;
+  max-width: 500px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: slideIn 0.3s ease;
+}
+
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.dialog-header h4 {
+  margin: 0;
+  color: #333;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.dialog-body {
+  padding: 1.5rem;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(248, 249, 250, 0.8);
+}
+
+.config-preview {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: rgba(248, 249, 250, 0.8);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.config-preview h5 {
+  margin: 0 0 0.75rem 0;
+  color: #333;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* 对话框底部信息样式 */
+.footer-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.footer-info small {
+  color: #666;
+  font-size: 0.85rem;
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+  .config-manager-dialog {
+    width: 95%;
+    max-width: none;
+    margin: 1rem;
+  }
+
+  .custom-config-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .config-info {
+    margin-right: 0;
+    margin-bottom: 1rem;
+  }
+
+  .config-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
+  .preset-actions {
+    flex-direction: column;
+  }
+
+  .action-btn {
+    min-width: 40px;
+    height: 40px;
+  }
 }
 </style>
