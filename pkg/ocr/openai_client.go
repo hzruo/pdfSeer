@@ -124,9 +124,8 @@ func (c *OpenAIClient) recognizeWithVision(ctx context.Context, base64Image stri
 				Content: `你是一个专业的OCR识别引擎。请精确识别图片中的所有文字，要求：
 1. 保持原始排版格式和换行
 2. 如果包含表格，请用Markdown格式输出
-3. 如果是扫描文档，请修正常见的OCR错误
-4. 直接返回识别的文字内容，不要使用代码块格式，不要添加任何解释或说明
-5. 如果无法识别任何文字，返回空字符串`,
+3. 直接返回识别的文字内容，不要使用代码块格式，不要添加任何解释或说明
+4. 如果无法识别任何文字，返回空字符串`,
 			},
 			{
 				Role: openai.ChatMessageRoleUser,

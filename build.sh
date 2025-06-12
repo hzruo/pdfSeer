@@ -23,8 +23,9 @@ fi
 
 # 修复Info.plist中的可执行文件名
 if [ -f "build/bin/识文君.app/Contents/Info.plist" ]; then
-    sed -i '' 's/<string>识文君<\/string>/<string>pdfSeer<\/string>/g' "build/bin/识文君.app/Contents/Info.plist"
-    echo "Info.plist已修复"
+    # 使用更简单的方法修复CFBundleExecutable
+    sed -i '' '/CFBundleExecutable/{n;s/<string>识文君<\/string>/<string>pdfSeer<\/string>/;}' "build/bin/识文君.app/Contents/Info.plist"
+    echo "Info.plist中的可执行文件名已修复为pdfSeer"
 fi
 
 # 移除扩展属性
