@@ -1,8 +1,8 @@
 <script lang="ts" setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { UpdatePageText, SaveFileWithDialog, SaveBinaryFileWithDialog } from '../../wailsjs/go/main/App'
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from 'docx'
-import { saveAs } from 'file-saver'
+import { renderMarkdown } from '../utils/markdown'
 
 // Props
 interface Props {
@@ -69,10 +69,22 @@ const centerWindow = () => {
   }
 }
 
+// 智能选择初始tab：如果有AI文本则优先显示AI tab
+const initializeActiveTab = () => {
+  if (props.aiText) {
+    activeTab.value = 'ai'
+  } else if (props.ocrText) {
+    activeTab.value = 'ocr'
+  } else {
+    activeTab.value = 'original'
+  }
+}
+
 // 组件挂载时加载上次的导出格式并居中显示
 onMounted(() => {
   loadLastExportFormat()
   centerWindow()
+  initializeActiveTab()
 })
 
 // 监听导出格式变化，实时保存
@@ -104,6 +116,20 @@ const wordCount = computed(() => {
 
 const lineCount = computed(() => {
   return editingText.value.split('\n').length
+})
+
+// 计算渲染后的文本（用于显示）
+const renderedText = computed(() => {
+  if (activeTab.value === 'ai' && !isEditing.value && props.aiText) {
+    // AI处理结果在非编辑模式下渲染为HTML
+    return renderMarkdown(props.aiText)
+  }
+  return null // 其他情况返回null，使用原始文本
+})
+
+// 判断是否应该显示渲染后的HTML
+const shouldShowRendered = computed(() => {
+  return activeTab.value === 'ai' && !isEditing.value && renderedText.value
 })
 
 // 监听器
@@ -216,11 +242,36 @@ const saveChanges = async () => {
   }
 }
 
+// Flash 提示状态
+const showFlash = ref(false)
+const flashMessage = ref('')
+const flashType = ref<'success' | 'error'>('success')
+
+// 显示 Flash 提示
+const showFlashMessage = (message: string, type: 'success' | 'error' = 'success') => {
+  flashMessage.value = message
+  flashType.value = type
+  showFlash.value = true
+
+  // 3秒后自动隐藏
+  setTimeout(() => {
+    showFlash.value = false
+  }, 3000)
+}
+
 const copyText = () => {
+  // 如果是AI处理结果且在非编辑模式下，复制原始markdown文本
   const textToCopy = isEditing.value ? editingText.value : currentText.value
-  
+
+  if (!textToCopy || textToCopy.trim() === '') {
+    showFlashMessage('没有可复制的内容', 'error')
+    return
+  }
+
   if (navigator.clipboard) {
     navigator.clipboard.writeText(textToCopy).then(() => {
+      showFlashMessage('✅ 文本已复制到剪贴板')
+      // 同时发送全局事件（兼容性）
       window.dispatchEvent(new CustomEvent('show-success', {
         detail: '文本已复制到剪贴板'
       }))
@@ -235,20 +286,30 @@ const copyText = () => {
 const fallbackCopy = (text: string) => {
   const textArea = document.createElement('textarea')
   textArea.value = text
+  textArea.style.position = 'fixed'
+  textArea.style.left = '-999999px'
+  textArea.style.top = '-999999px'
   document.body.appendChild(textArea)
+  textArea.focus()
   textArea.select()
-  
+
   try {
-    document.execCommand('copy')
-    window.dispatchEvent(new CustomEvent('show-success', {
-      detail: '文本已复制到剪贴板'
-    }))
+    const successful = document.execCommand('copy')
+    if (successful) {
+      showFlashMessage('✅ 文本已复制到剪贴板')
+      window.dispatchEvent(new CustomEvent('show-success', {
+        detail: '文本已复制到剪贴板'
+      }))
+    } else {
+      throw new Error('复制命令执行失败')
+    }
   } catch (err) {
+    showFlashMessage('❌ 复制失败，请手动选择文本复制', 'error')
     window.dispatchEvent(new CustomEvent('show-error', {
       detail: '复制失败'
     }))
   }
-  
+
   document.body.removeChild(textArea)
 }
 
@@ -794,9 +855,12 @@ const stopResize = () => {
     <!-- 编辑区域 -->
     <div class="editor-content">
       <div v-if="!isEditing" class="text-display">
-        <pre class="text-content">{{ currentText }}</pre>
+        <!-- AI处理结果显示渲染后的HTML -->
+        <div v-if="shouldShowRendered" class="rendered-content" v-html="renderedText"></div>
+        <!-- 其他情况显示原始文本 -->
+        <pre v-else class="text-content">{{ currentText }}</pre>
       </div>
-      
+
       <div v-else class="text-edit">
         <textarea
           v-model="editingText"
@@ -900,6 +964,14 @@ const stopResize = () => {
         </div>
       </div>
     </div>
+
+    <!-- Flash 提示 -->
+    <div v-if="showFlash" :class="['flash-message', `flash-${flashType}`]">
+      <div class="flash-content">
+        <span class="flash-text">{{ flashMessage }}</span>
+        <button @click="showFlash = false" class="flash-close">×</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -984,17 +1056,19 @@ const stopResize = () => {
   height: 100%;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .editor-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 1.5rem;
-  background: rgba(248, 249, 250, 0.9);
-  backdrop-filter: blur(10px);
+  padding: 1.25rem 1.5rem;
+  background: rgba(248, 249, 250, 0.95);
+  backdrop-filter: blur(15px);
   border-bottom: 1px solid rgba(224, 224, 224, 0.3);
   cursor: move;
   user-select: none;
@@ -1007,7 +1081,7 @@ const stopResize = () => {
 }
 
 .header-icon {
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   opacity: 0.8;
 }
 
@@ -1019,8 +1093,8 @@ const stopResize = () => {
 }
 
 .close-btn {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
   font-size: 1.2rem;
   cursor: pointer;
   color: #666;
@@ -1033,18 +1107,20 @@ const stopResize = () => {
   border-radius: 8px;
   transition: all 0.2s ease;
   backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .close-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 1);
   color: #333;
-  transform: scale(1.05);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .editor-tabs {
   display: flex;
-  background: rgba(248, 249, 250, 0.9);
-  backdrop-filter: blur(10px);
+  background: rgba(248, 249, 250, 0.95);
+  backdrop-filter: blur(15px);
   border-bottom: 1px solid rgba(224, 224, 224, 0.3);
 }
 
@@ -1057,31 +1133,34 @@ const stopResize = () => {
   font-size: 0.9rem;
   color: #666;
   border-bottom: 2px solid transparent;
-  transition: all 0.2s;
+  transition: all 0.3s ease;
   position: relative;
   backdrop-filter: blur(10px);
+  font-weight: 500;
 }
 
 .tab-btn:hover {
-  background: rgba(233, 236, 239, 0.5);
-  color: #333;
+  background: rgba(102, 126, 234, 0.1);
+  color: #667eea;
 }
 
 .tab-btn.active {
-  color: #007bff;
-  border-bottom-color: #007bff;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(10px);
+  color: #667eea;
+  border-bottom-color: #667eea;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(15px);
 }
 
 .editable-badge {
   display: inline-block;
-  background: #28a745;
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
   color: white;
   font-size: 0.7rem;
-  padding: 0.1rem 0.3rem;
-  border-radius: 3px;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
   margin-left: 0.5rem;
+  font-weight: 500;
+  box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
 }
 
 .editor-toolbar {
@@ -1142,6 +1221,128 @@ const stopResize = () => {
   white-space: pre-wrap;
   word-wrap: break-word;
   color: #333;
+}
+
+/* 渲染后的内容样式 */
+.rendered-content {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #333;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* 渲染内容中的各种元素样式 */
+.rendered-content h1,
+.rendered-content h2,
+.rendered-content h3,
+.rendered-content h4,
+.rendered-content h5,
+.rendered-content h6 {
+  margin: 1.5em 0 0.5em 0;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #2c3e50;
+}
+
+.rendered-content h1 { font-size: 1.8em; border-bottom: 2px solid #eee; padding-bottom: 0.3em; }
+.rendered-content h2 { font-size: 1.5em; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+.rendered-content h3 { font-size: 1.3em; }
+.rendered-content h4 { font-size: 1.1em; }
+.rendered-content h5 { font-size: 1em; }
+.rendered-content h6 { font-size: 0.9em; }
+
+.rendered-content p {
+  margin: 0.8em 0;
+}
+
+.rendered-content ul,
+.rendered-content ol {
+  margin: 0.8em 0;
+  padding-left: 2em;
+}
+
+.rendered-content li {
+  margin: 0.3em 0;
+}
+
+.rendered-content blockquote {
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  border-left: 4px solid #667eea;
+  background: #f8f9fa;
+  color: #666;
+  font-style: italic;
+}
+
+.rendered-content code {
+  background: #f1f3f4;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85em;
+  color: #e83e8c;
+}
+
+.rendered-content pre {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 4px;
+  padding: 1em;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+.rendered-content pre code {
+  background: none;
+  padding: 0;
+  color: #333;
+}
+
+.rendered-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  border: 1px solid #ddd;
+}
+
+.rendered-content th,
+.rendered-content td {
+  border: 1px solid #ddd;
+  padding: 0.5em 0.8em;
+  text-align: left;
+}
+
+.rendered-content th {
+  background: #f8f9fa;
+  font-weight: 600;
+}
+
+.rendered-content strong {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.rendered-content em {
+  font-style: italic;
+  color: #666;
+}
+
+.rendered-content a {
+  color: #667eea;
+  text-decoration: none;
+}
+
+.rendered-content a:hover {
+  text-decoration: underline;
+}
+
+.rendered-content hr {
+  border: none;
+  border-top: 2px solid #eee;
+  margin: 2em 0;
 }
 
 .text-edit {
@@ -1212,55 +1413,90 @@ const stopResize = () => {
 }
 
 .btn {
-  padding: 0.5rem 1rem;
+  padding: 0.75rem 1.5rem;
   border: none;
-  border-radius: 4px;
+  border-radius: 10px;
   cursor: pointer;
   font-size: 0.9rem;
-  transition: background-color 0.2s;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+.btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.btn:hover::before {
+  left: 100%;
 }
 
 .btn-primary {
-  background: #007bff;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #0056b3;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
 }
 
 .btn-success {
-  background: #28a745;
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
   color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .btn-success:hover:not(:disabled) {
-  background: #1e7e34;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
 }
 
 .btn-secondary {
-  background: #6c757d;
+  background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
   color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.btn-secondary:hover {
-  background: #545b62;
+.btn-secondary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(108, 117, 125, 0.4);
 }
 
 .btn-outline {
-  background: transparent;
-  color: #6c757d;
-  border: 1px solid #6c757d;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(248, 249, 250, 0.9) 100%);
+  color: #667eea;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
 }
 
-.btn-outline:hover {
-  background: #6c757d;
-  color: white;
+.btn-outline:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+  color: #764ba2;
+  border-color: rgba(102, 126, 234, 0.4);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
 }
 
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  transform: none !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
 }
 
 /* 导出对话框样式 */
@@ -1271,20 +1507,24 @@ const stopResize = () => {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  padding: 1rem;
 }
 
 .export-dialog {
-  background: white;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(15px);
+  border-radius: 16px;
   width: 90%;
-  max-width: 500px;
-  max-height: 80vh;
+  max-width: 480px;
+  max-height: 85vh;
   overflow: hidden;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .dialog-header {
@@ -1292,55 +1532,84 @@ const stopResize = () => {
   justify-content: space-between;
   align-items: center;
   padding: 1.5rem;
-  border-bottom: 1px solid #e0e0e0;
-  background: #f8f9fa;
+  border-bottom: 1px solid rgba(224, 224, 224, 0.3);
+  background: rgba(248, 249, 250, 0.95);
+  backdrop-filter: blur(15px);
 }
 
 .dialog-header h4 {
   margin: 0;
   color: #333;
   font-size: 1.1rem;
+  font-weight: 600;
 }
 
 .dialog-content {
   padding: 1.5rem;
-  max-height: 400px;
+  max-height: 50vh;
   overflow-y: auto;
+  /* 自定义滚动条样式 */
+  scrollbar-width: thin;
+  scrollbar-color: #ccc #f0f0f0;
+}
+
+.dialog-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dialog-content::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 4px;
+}
+
+.dialog-content::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 4px;
+}
+
+.dialog-content::-webkit-scrollbar-thumb:hover {
+  background: #999;
 }
 
 .format-options {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 1rem;
 }
 
 .format-option {
   display: flex;
   align-items: flex-start;
-  gap: 1rem;
+  gap: 0.75rem;
   padding: 1rem;
-  border: 2px solid #e0e0e0;
-  border-radius: 8px;
+  border: 2px solid rgba(224, 224, 224, 0.5);
+  border-radius: 12px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
 }
 
 .format-option:hover {
-  border-color: #007bff;
-  background: #f8f9ff;
+  border-color: rgba(102, 126, 234, 0.6);
+  background: rgba(102, 126, 234, 0.05);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
 }
 
 .format-option input[type="radio"] {
   margin-top: 0.2rem;
+  accent-color: #667eea;
 }
 
 .format-option input[type="radio"]:checked + .option-content {
-  color: #007bff;
+  color: #667eea;
 }
 
 .format-option:has(input[type="radio"]:checked) {
-  border-color: #007bff;
-  background: #f8f9ff;
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.1);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
 }
 
 .option-content {
@@ -1348,15 +1617,17 @@ const stopResize = () => {
 }
 
 .option-title {
-  font-weight: 500;
+  font-weight: 600;
   margin-bottom: 0.25rem;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  line-height: 1.3;
 }
 
 .option-desc {
   color: #666;
-  font-size: 0.9rem;
-  line-height: 1.4;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  display: none; /* 隐藏描述文字以节省空间 */
 }
 
 .dialog-footer {
@@ -1364,8 +1635,55 @@ const stopResize = () => {
   justify-content: flex-end;
   gap: 1rem;
   padding: 1.5rem;
-  border-top: 1px solid #e0e0e0;
-  background: #f8f9fa;
+  border-top: 1px solid rgba(224, 224, 224, 0.3);
+  background: rgba(248, 249, 250, 0.95);
+  backdrop-filter: blur(15px);
+}
+
+/* 响应式设计 - 在小屏幕上显示单列 */
+@media (max-width: 768px) {
+  .export-dialog {
+    width: 95%;
+    max-width: none;
+    margin: 0.5rem;
+  }
+
+  .format-options {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .option-desc {
+    display: block; /* 在小屏幕上显示描述 */
+  }
+
+  .dialog-header,
+  .dialog-content,
+  .dialog-footer {
+    padding: 1rem;
+  }
+
+  .dialog-content {
+    max-height: 60vh;
+  }
+}
+
+@media (max-height: 700px) {
+  .export-dialog {
+    max-height: 90vh;
+  }
+
+  .dialog-content {
+    max-height: 40vh;
+  }
+
+  .format-options {
+    gap: 0.5rem;
+  }
+
+  .format-option {
+    padding: 0.75rem;
+  }
 }
 
 /* 通用对话框样式 */
@@ -1376,7 +1694,7 @@ const stopResize = () => {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1385,12 +1703,12 @@ const stopResize = () => {
 
 .dialog-content {
   background: rgba(255, 255, 255, 0.98);
-  backdrop-filter: blur(12px);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(15px);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   overflow: hidden;
-  min-width: 300px;
+  min-width: 320px;
   max-width: 500px;
   max-height: 80vh;
 }
@@ -1408,26 +1726,28 @@ const stopResize = () => {
 
 /* 确认对话框特定样式 */
 .confirm-dialog {
-  min-width: 320px;
-  max-width: 380px;
+  min-width: 360px;
+  max-width: 420px;
 }
 
 .confirm-dialog .dialog-header {
-  padding: 1rem 1.25rem 0.5rem;
+  padding: 1.25rem 1.5rem 0.75rem;
   border-bottom: none;
-  background: transparent;
+  background: rgba(248, 249, 250, 0.95);
+  backdrop-filter: blur(15px);
 }
 
 .confirm-dialog .dialog-header h4 {
-  font-size: 1rem;
-  font-weight: 500;
+  font-size: 1.1rem;
+  font-weight: 600;
   color: #333;
   text-align: center;
+  margin: 0;
 }
 
 .confirm-dialog .dialog-body {
   text-align: center;
-  padding: 0.75rem 1.25rem 1.25rem;
+  padding: 1rem 1.5rem 1.5rem;
 }
 
 .confirm-dialog .dialog-body p {
@@ -1438,16 +1758,214 @@ const stopResize = () => {
 }
 
 .confirm-dialog .dialog-footer {
-  padding: 0.75rem 1.25rem 1.25rem;
-  border-top: none;
-  background: transparent;
-  gap: 0.75rem;
+  padding: 1rem 1.5rem 1.5rem;
+  border-top: 1px solid rgba(224, 224, 224, 0.3);
+  background: rgba(248, 249, 250, 0.95);
+  backdrop-filter: blur(15px);
+  gap: 1rem;
 }
 
 .confirm-dialog .btn {
-  padding: 0.5rem 1.25rem;
+  padding: 0.75rem 1.5rem;
   font-size: 0.9rem;
-  border-radius: 6px;
-  min-width: 70px;
+  border-radius: 10px;
+  min-width: 80px;
+  font-weight: 500;
+}
+
+/* Flash 提示样式 */
+.flash-message {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 10001;
+  min-width: 300px;
+  max-width: 500px;
+  border-radius: 12px;
+  backdrop-filter: blur(15px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: flashSlideIn 0.3s ease-out;
+}
+
+.flash-success {
+  background: rgba(40, 167, 69, 0.95);
+  color: white;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.flash-error {
+  background: rgba(220, 53, 69, 0.95);
+  color: white;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.flash-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  gap: 1rem;
+}
+
+.flash-text {
+  flex: 1;
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.flash-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  opacity: 0.8;
+}
+
+.flash-close:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.1);
+}
+
+@keyframes flashSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* 响应式设计 - 支持 720p 到 1080p */
+@media (max-width: 1366px) {
+  .text-editor {
+    border-radius: 12px;
+  }
+
+  .editor-header {
+    padding: 1rem 1.25rem;
+  }
+
+  .btn {
+    padding: 0.6rem 1.25rem;
+    font-size: 0.85rem;
+  }
+}
+
+@media (max-width: 1280px) {
+  .text-editor {
+    border-radius: 10px;
+  }
+
+  .editor-header {
+    padding: 0.75rem 1rem;
+  }
+
+  .editor-header h3 {
+    font-size: 1rem;
+  }
+
+  .btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+  }
+
+  .export-dialog {
+    max-width: 400px;
+  }
+
+  .dialog-content {
+    max-height: 55vh;
+  }
+}
+
+@media (max-height: 768px) {
+  .editor-header {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .editor-header h3 {
+    font-size: 0.95rem;
+  }
+
+  .close-btn {
+    width: 28px;
+    height: 28px;
+    font-size: 1rem;
+  }
+
+  .btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.75rem;
+  }
+
+  .export-dialog {
+    max-width: 350px;
+    max-height: 80vh;
+  }
+
+  .dialog-content {
+    max-height: 45vh;
+    padding: 1rem;
+  }
+
+  .format-options {
+    gap: 0.25rem;
+  }
+
+  .format-option {
+    padding: 0.5rem;
+  }
+}
+
+@media (max-height: 720px) {
+  .text-editor {
+    max-height: 90vh;
+    overflow: hidden;
+  }
+
+  .editor-content {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .export-dialog {
+    max-height: 85vh;
+  }
+
+  .dialog-content {
+    max-height: 40vh;
+  }
+}
+
+@media (max-width: 768px) {
+  .flash-message {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    min-width: auto;
+    max-width: none;
+  }
+
+  .flash-content {
+    padding: 0.875rem 1rem;
+  }
+
+  .flash-text {
+    font-size: 0.9rem;
+  }
 }
 </style>

@@ -1192,16 +1192,19 @@ const debouncedSearch = () => {
           <div class="dialog-content">
             <div class="export-mode-selection">
               <label>选择导出范围：</label>
+              <div class="mode-description">
+                <p v-if="exportMode === 'single'">只导出当前查看的历史记录</p>
+                <p v-else-if="exportMode === 'document'">导出该文档的所有历史记录（自动合并去重）</p>
+                <p v-else>请选择导出范围</p>
+              </div>
               <div class="mode-options">
                 <label class="mode-option">
                   <input type="radio" v-model="exportMode" value="single" />
                   <span>当前记录</span>
-                  <small>只导出当前查看的历史记录</small>
                 </label>
                 <label class="mode-option">
                   <input type="radio" v-model="exportMode" value="document" />
                   <span>整个文档</span>
-                  <small>导出该文档的所有历史记录（合并去重）</small>
                 </label>
               </div>
             </div>
@@ -1246,10 +1249,8 @@ const debouncedSearch = () => {
               </div>
             </div>
 
-            <div class="export-info">
-              <p v-if="exportMode === 'single'">将导出当前历史记录的所有页面内容</p>
-              <p v-else>将导出该文档所有历史记录的页面内容（自动合并去重）</p>
-              <p v-if="selectedPages.length > 0 && exportMode === 'single'">
+            <div class="export-info" v-if="selectedPages.length > 0 && exportMode === 'single'">
+              <p>
                 <strong>页面数：</strong> {{ selectedPages.length }} 页
               </p>
             </div>
@@ -1890,19 +1891,24 @@ const debouncedSearch = () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1600;
+  padding: 1rem;
 }
 
 .export-dialog {
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-  width: 90%;
-  max-width: 500px;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(15px);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  width: 100%;
+  max-width: 450px;
+  max-height: 85vh;
   overflow: hidden;
 }
 
@@ -1910,79 +1916,129 @@ const debouncedSearch = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 1.5rem;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e0e0e0;
+  padding: 1rem 1.25rem;
+  background: rgba(248, 249, 250, 0.95);
+  backdrop-filter: blur(15px);
+  border-bottom: 1px solid rgba(224, 224, 224, 0.3);
 }
 
 .dialog-header h3 {
   margin: 0;
   color: #333;
+  font-size: 1.1rem;
+  font-weight: 600;
 }
 
 .dialog-content {
-  padding: 1.5rem;
+  padding: 1.25rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #ccc #f0f0f0;
+}
+
+.dialog-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dialog-content::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 3px;
+}
+
+.dialog-content::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+.dialog-content::-webkit-scrollbar-thumb:hover {
+  background: #999;
 }
 
 .export-mode-selection {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
-.export-mode-selection label {
+.export-mode-selection > label {
   display: block;
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
   font-weight: 500;
   color: #333;
+  font-size: 0.95rem;
+}
+
+.mode-description {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(102, 126, 234, 0.05);
+  border-radius: 6px;
+  border-left: 3px solid #667eea;
+  min-height: 1.5rem;
+  display: flex;
+  align-items: center;
+}
+
+.mode-description p {
+  margin: 0;
+  color: #666;
+  font-size: 0.85rem;
+  line-height: 1.3;
 }
 
 .mode-options {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
 }
 
 .mode-option {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  align-items: center;
+  gap: 0.5rem;
   padding: 0.75rem;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
+  border: 2px solid rgba(224, 224, 224, 0.5);
+  border-radius: 8px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  background: rgba(255, 255, 255, 0.8);
+  justify-content: center;
 }
 
 .mode-option:hover {
-  background: #f8f9fa;
+  border-color: rgba(102, 126, 234, 0.6);
+  background: rgba(102, 126, 234, 0.05);
+}
+
+.mode-option:has(input[type="radio"]:checked) {
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.1);
 }
 
 .mode-option input[type="radio"] {
   margin: 0;
-  margin-right: 0.5rem;
+  accent-color: #667eea;
+  flex-shrink: 0;
 }
 
 .mode-option span {
   font-weight: 500;
-}
-
-.mode-option small {
-  color: #666;
-  font-size: 0.85rem;
-  margin-left: 1.25rem;
+  font-size: 0.9rem;
+  white-space: nowrap;
 }
 
 .format-selection label {
   display: block;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
   font-weight: 500;
   color: #333;
+  font-size: 0.95rem;
 }
 
 .format-options {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.5rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 .format-option {
@@ -1990,30 +2046,32 @@ const debouncedSearch = () => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.6rem;
-  border: 2px solid #e0e0e0;
+  border: 2px solid rgba(224, 224, 224, 0.5);
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   white-space: nowrap;
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .format-option:hover {
-  border-color: #007bff;
-  background: #f8f9ff;
+  border-color: rgba(102, 126, 234, 0.6);
+  background: rgba(102, 126, 234, 0.05);
 }
 
 .format-option input[type="radio"] {
   margin: 0;
   flex-shrink: 0;
+  accent-color: #667eea;
 }
 
 .format-option input[type="radio"]:checked + .option-content {
-  color: #007bff;
+  color: #667eea;
 }
 
 .format-option:has(input[type="radio"]:checked) {
-  border-color: #007bff;
-  background: #f8f9ff;
+  border-color: #667eea;
+  background: rgba(102, 126, 234, 0.1);
 }
 
 .option-content {
@@ -2023,21 +2081,23 @@ const debouncedSearch = () => {
 
 .option-title {
   font-weight: 500;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .export-info {
-  background: #f8f9fa;
-  padding: 1rem;
-  border-radius: 4px;
-  border-left: 4px solid #28a745;
+  background: rgba(40, 167, 69, 0.1);
+  padding: 0.75rem;
+  border-radius: 8px;
+  border-left: 3px solid #28a745;
 }
 
 .export-info p {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 0.25rem 0;
   color: #666;
+  font-size: 0.85rem;
+  line-height: 1.3;
 }
 
 .export-info p:last-child {
@@ -2047,37 +2107,114 @@ const debouncedSearch = () => {
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 1rem;
-  padding: 1rem 1.5rem;
-  background: #f8f9fa;
-  border-top: 1px solid #e0e0e0;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: rgba(248, 249, 250, 0.95);
+  backdrop-filter: blur(15px);
+  border-top: 1px solid rgba(224, 224, 224, 0.3);
 }
 
 .btn {
-  padding: 0.5rem 1rem;
+  padding: 0.75rem 1.25rem;
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 0.9rem;
-  transition: background-color 0.2s;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.btn:hover::before {
+  left: 100%;
 }
 
 .btn-primary {
-  background: #007bff;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .btn-primary:hover {
-  background: #0056b3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
 .btn-secondary {
-  background: #6c757d;
+  background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
   color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .btn-secondary:hover {
-  background: #545b62;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(108, 117, 125, 0.4);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .export-dialog {
+    width: 95%;
+    max-width: none;
+    margin: 0.5rem;
+  }
+
+  .mode-options,
+  .format-options {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .dialog-header,
+  .dialog-content,
+  .dialog-actions {
+    padding: 1rem;
+  }
+
+  .dialog-content {
+    max-height: 50vh;
+  }
+
+  .export-mode-selection,
+  .format-options {
+    margin-bottom: 0.75rem;
+  }
+}
+
+@media (max-height: 700px) {
+  .export-dialog {
+    max-height: 90vh;
+  }
+
+  .dialog-content {
+    max-height: 45vh;
+  }
+
+  .mode-option,
+  .format-option {
+    padding: 0.5rem;
+  }
+
+  .export-info {
+    padding: 0.5rem;
+  }
+
+  .export-info p {
+    font-size: 0.8rem;
+  }
 }
 
 /* 删除确认对话框样式 */

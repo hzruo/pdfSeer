@@ -105,14 +105,44 @@ body {
 .p-2 { padding: 1rem; }
 .p-3 { padding: 1.5rem; }
 
-/* 响应式设计 */
-@media (max-width: 768px) {
+/* 响应式设计 - 支持 720p 到 4K */
+
+/* 4K 和超宽屏优化 (2560px+) */
+@media (min-width: 2560px) {
+    html {
+        font-size: 18px;
+    }
+}
+
+/* 2K 屏幕优化 (1920px-2559px) */
+@media (min-width: 1920px) and (max-width: 2559px) {
+    html {
+        font-size: 16px;
+    }
+}
+
+/* 1080p 屏幕优化 (1366px-1919px) */
+@media (min-width: 1366px) and (max-width: 1919px) {
+    html {
+        font-size: 14px;
+    }
+}
+
+/* 小于 1366px 的屏幕 */
+@media (max-width: 1365px) {
+    html {
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 1280px) {
     html {
         font-size: 12px;
     }
 
     .sidebar {
-        width: 240px !important;
+        width: 260px !important;
+        min-width: 240px !important;
     }
 
     .toolbar {
@@ -120,6 +150,41 @@ body {
     }
 
     .toolbar-right {
+        gap: 0.75rem !important;
+    }
+}
+
+@media (max-height: 768px) {
+    html {
+        font-size: 11px;
+    }
+
+    .sidebar {
+        width: 240px !important;
+        min-width: 220px !important;
+    }
+
+    .toolbar {
+        padding: 0.5rem 1rem !important;
+    }
+
+    .toolbar-right {
         gap: 0.5rem !important;
+    }
+}
+
+@media (max-height: 720px) {
+    html {
+        font-size: 10px;
+    }
+
+    body {
+        overflow-y: auto;
+    }
+
+    #app {
+        min-height: 100vh;
+        height: auto;
+        overflow: visible;
     }
 }

@@ -308,27 +308,62 @@ const resetZoom = () => {
 
 // 分割线拖拽控制
 const startDrag = (event: MouseEvent) => {
+  console.log('开始拖拽分割线')
   isDragging.value = true
-  document.addEventListener('mousemove', onDrag)
+  document.addEventListener('mousemove', onDrag, { passive: false })
   document.addEventListener('mouseup', stopDrag)
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'col-resize'
   event.preventDefault()
+  event.stopPropagation()
 }
 
 const onDrag = (event: MouseEvent) => {
   if (!isDragging.value) return
 
+  // 查找正确的容器 - 使用 .single-view 作为参考容器
   const container = document.querySelector('.single-view') as HTMLElement
-  if (!container) return
+  if (!container) {
+    console.log('未找到 .single-view 容器')
+    return
+  }
 
   const rect = container.getBoundingClientRect()
-  const newPosition = ((event.clientX - rect.left) / rect.width) * 100
-  splitPosition.value = Math.max(20, Math.min(80, newPosition))
+  const mouseX = event.clientX
+  const containerLeft = rect.left
+  const containerWidth = rect.width
+
+  // 计算相对于容器的位置百分比
+  const relativeX = mouseX - containerLeft
+  const newPosition = (relativeX / containerWidth) * 100
+
+  console.log(`拖拽调试信息:`, {
+    mouseX,
+    containerLeft,
+    containerWidth,
+    relativeX,
+    newPosition,
+    currentSplitPosition: splitPosition.value
+  })
+
+  // 限制拖拽范围：左侧最小20%，最大80%
+  const clampedPosition = Math.max(20, Math.min(80, newPosition))
+
+  // 只有当位置真正改变时才更新
+  if (Math.abs(clampedPosition - splitPosition.value) > 0.1) {
+    splitPosition.value = clampedPosition
+    console.log(`更新分割位置: ${clampedPosition}%`)
+  }
+
+  event.preventDefault()
 }
 
 const stopDrag = () => {
   isDragging.value = false
   document.removeEventListener('mousemove', onDrag)
   document.removeEventListener('mouseup', stopDrag)
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
 }
 
 // 预加载相邻页面

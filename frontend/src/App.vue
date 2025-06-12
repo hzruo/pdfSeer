@@ -1134,6 +1134,7 @@ const generateTextContent = (text: string) => {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
   position: relative;
   z-index: 10;
+  min-height: 60px;
 }
 
 .toolbar-left h1 {
@@ -1162,10 +1163,12 @@ const generateTextContent = (text: string) => {
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
   overflow: hidden;
+  min-height: 0;
 }
 
 .sidebar {
   width: 320px;
+  min-width: 280px;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
   border-right: 1px solid rgba(255, 255, 255, 0.2);
@@ -1711,6 +1714,200 @@ const generateTextContent = (text: string) => {
   font-size: 0.9rem;
   color: #666;
   margin: 0.25rem 0;
+}
+
+/* 响应式设计 - 支持 720p 到 4K */
+
+/* 4K 和超宽屏优化 (2560px+) */
+@media (min-width: 2560px) {
+  .toolbar {
+    padding: 1.5rem 3rem;
+  }
+
+  .toolbar-left h1 {
+    font-size: 2.2rem;
+  }
+
+  .main-content {
+    margin: 1.5rem;
+  }
+
+  .sidebar {
+    width: 400px;
+    min-width: 380px;
+    padding: 2rem;
+  }
+
+  .sidebar-section h3 {
+    font-size: 1.3rem;
+  }
+
+  .btn {
+    padding: 1rem 2rem;
+    font-size: 1rem;
+  }
+}
+
+/* 2K 屏幕优化 (1920px-2559px) */
+@media (min-width: 1920px) and (max-width: 2559px) {
+  .toolbar {
+    padding: 1.25rem 2.5rem;
+  }
+
+  .toolbar-left h1 {
+    font-size: 2rem;
+  }
+
+  .main-content {
+    margin: 1.25rem;
+  }
+
+  .sidebar {
+    width: 360px;
+    min-width: 340px;
+    padding: 1.75rem;
+  }
+
+  .sidebar-section h3 {
+    font-size: 1.2rem;
+  }
+
+  .btn {
+    padding: 0.875rem 1.75rem;
+    font-size: 0.95rem;
+  }
+}
+
+/* 1080p 屏幕优化 (1366px-1919px) */
+@media (min-width: 1366px) and (max-width: 1919px) {
+  .toolbar {
+    padding: 1rem 2rem;
+  }
+
+  .toolbar-left h1 {
+    font-size: 1.8rem;
+  }
+
+  .main-content {
+    margin: 1rem;
+  }
+
+  .sidebar {
+    width: 320px;
+    min-width: 300px;
+    padding: 1.5rem;
+  }
+}
+
+/* 小于 1366px 的屏幕 */
+@media (max-width: 1365px) {
+  .toolbar {
+    padding: 0.75rem 1.5rem;
+  }
+
+  .toolbar-left h1 {
+    font-size: 1.6rem;
+  }
+
+  .main-content {
+    margin: 0.75rem;
+  }
+
+  .sidebar {
+    width: 280px;
+    min-width: 260px;
+    padding: 1.25rem;
+  }
+}
+
+@media (max-width: 1280px) {
+  .toolbar {
+    padding: 0.75rem 1rem;
+  }
+
+  .toolbar-left h1 {
+    font-size: 1.5rem;
+  }
+
+  .toolbar-right {
+    gap: 0.75rem;
+  }
+
+  .main-content {
+    margin: 0.5rem;
+  }
+
+  .sidebar {
+    width: 260px;
+    min-width: 240px;
+    padding: 1rem;
+  }
+
+  .sidebar-section {
+    margin-bottom: 1.5rem;
+  }
+
+  .sidebar-section h3 {
+    font-size: 1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .btn {
+    padding: 0.6rem 1.25rem;
+    font-size: 0.85rem;
+  }
+}
+
+@media (max-height: 768px) {
+  .toolbar {
+    padding: 0.5rem 1rem;
+    min-height: 50px;
+  }
+
+  .toolbar-left h1 {
+    font-size: 1.4rem;
+  }
+
+  .main-content {
+    margin: 0.25rem;
+  }
+
+  .sidebar {
+    padding: 0.75rem;
+  }
+
+  .sidebar-section {
+    margin-bottom: 1rem;
+  }
+
+  .sidebar-section h3 {
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .action-buttons {
+    gap: 0.5rem;
+  }
+
+  .btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-height: 720px) {
+  .app-container {
+    overflow-y: auto;
+  }
+
+  .main-content {
+    min-height: calc(100vh - 60px);
+    flex: none;
+  }
+
+  .sidebar {
+    max-height: calc(100vh - 80px);
+  }
 }
 
 .summary-item .pages-preview {
