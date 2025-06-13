@@ -31,6 +31,42 @@ fi
 # 移除扩展属性
 xattr -cr "build/bin/识文君.app"
 
+# 检查是否有代码签名证书
+SIGNING_IDENTITY=""
+if security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
+    SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    echo "找到签名证书: $SIGNING_IDENTITY"
+
+    # 对应用进行代码签名
+    echo "正在对应用进行代码签名..."
+    codesign --force --deep --sign "$SIGNING_IDENTITY" "build/bin/识文君.app"
+
+    if [ $? -eq 0 ]; then
+        echo "✅ 代码签名成功"
+        # 验证签名
+        codesign --verify --verbose "build/bin/识文君.app"
+    else
+        echo "⚠️  代码签名失败，但应用仍可使用"
+    fi
+elif security find-identity -v -p codesigning | grep -q "Mac Developer\|Apple Development"; then
+    SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep -E "Mac Developer|Apple Development" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    echo "找到开发证书: $SIGNING_IDENTITY"
+
+    # 使用开发证书签名（仅限本地使用）
+    echo "正在使用开发证书签名..."
+    codesign --force --deep --sign "$SIGNING_IDENTITY" "build/bin/识文君.app"
+
+    if [ $? -eq 0 ]; then
+        echo "✅ 开发证书签名成功（仅限本地使用）"
+    else
+        echo "⚠️  签名失败，但应用仍可使用"
+    fi
+else
+    echo "⚠️  未找到代码签名证书"
+    echo "💡 提示: 应用可能会被 macOS 标记为'已损坏'"
+    echo "   解决方法: sudo xattr -rd com.apple.quarantine \"build/bin/识文君.app\""
+fi
+
 echo "构建完成！"
 echo "应用位置: build/bin/识文君.app"
 echo "版本: $VERSION"

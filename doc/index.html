@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>识文君 - 使用帮助</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 2.5rem;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+        }
+
+        .nav {
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .nav h3 {
+            color: #667eea;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+
+        .nav-links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0.5rem;
+        }
+
+        .nav-link {
+            color: #667eea;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
+        }
+
+        .nav-link:hover {
+            background: rgba(102, 126, 234, 0.1);
+            color: #764ba2;
+        }
+
+        .section {
+            margin-bottom: 3rem;
+            scroll-margin-top: 2rem;
+        }
+
+        .section h2 {
+            color: #333;
+            font-size: 1.8rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .section h3 {
+            color: #555;
+            font-size: 1.3rem;
+            margin: 2rem 0 1rem 0;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .feature-card {
+            background: rgba(248, 249, 250, 0.8);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid rgba(102, 126, 234, 0.2);
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
+        }
+
+        .feature-card h4 {
+            color: #667eea;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+
+        .feature-list {
+            list-style: none;
+        }
+
+        .feature-list li {
+            margin-bottom: 0.5rem;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+
+        .feature-list li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .steps {
+            background: rgba(102, 126, 234, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .steps h4 {
+            color: #667eea;
+            margin-bottom: 1rem;
+        }
+
+        .step-list {
+            list-style: none;
+            counter-reset: step-counter;
+        }
+
+        .step-list li {
+            counter-increment: step-counter;
+            margin-bottom: 1rem;
+            padding-left: 3rem;
+            position: relative;
+        }
+
+        .step-list li::before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 0;
+            top: 0;
+            background: #667eea;
+            color: white;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .highlight-box {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            border-left: 4px solid #667eea;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .highlight-box h4 {
+            color: #667eea;
+            margin-bottom: 0.5rem;
+        }
+
+        .code-block {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(0,0,0,0.1);
+            color: #666;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .content {
+                padding: 1.5rem;
+            }
+            
+            .nav-links {
+                grid-template-columns: 1fr;
+            }
+            
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📄 识文君</h1>
+            <p class="subtitle">智能PDF文字识别助手 - 使用帮助</p>
+        </div>
+
+        <div class="content">
+            <!-- 导航菜单 -->
+            <div class="nav">
+                <h3>📋 快速导航</h3>
+                <div class="nav-links">
+                    <a href="#overview" class="nav-link">软件介绍</a>
+                    <a href="#features" class="nav-link">主要功能</a>
+                    <a href="#quick-start" class="nav-link">快速开始</a>
+                    <a href="#system-requirements" class="nav-link">系统要求</a>
+                    <a href="#ai-config" class="nav-link">AI配置</a>
+                    <a href="#usage" class="nav-link">使用指南</a>
+                    <a href="#export" class="nav-link">导出功能</a>
+                    <a href="#faq" class="nav-link">常见问题</a>
+                </div>
+            </div>
+
+            <!-- 软件介绍 -->
+            <section id="overview" class="section">
+                <h2>🎯 软件介绍</h2>
+                <p>识文君是一款智能PDF文字识别助手，基于先进的AI技术，能够高精度地识别PDF文档和图片中的文字内容。支持多种AI模型，提供便捷的文本编辑和导出功能，让文档数字化变得简单高效。</p>
+                
+                <div class="highlight-box">
+                    <h4>🌟 为什么选择识文君？</h4>
+                    <p>• <strong>高精度识别</strong>：基于最新AI视觉模型，识别准确率高<br>
+                    • <strong>多格式支持</strong>：支持PDF、图片等多种文档格式<br>
+                    • <strong>智能处理</strong>：自动优化排版，保持原始格式<br>
+                    • <strong>批量处理</strong>：支持大量文档的高效处理</p>
+                </div>
+            </section>
+
+            <!-- 主要功能 -->
+            <section id="features" class="section">
+                <h2>✨ 主要功能</h2>
+                
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>📄 文档格式支持</h4>
+                        <ul class="feature-list">
+                            <li>PDF文档完整支持</li>
+                            <li>图片格式支持开发中</li>
+                            <li>多页PDF智能识别</li>
+                            <li>高质量PDF渲染</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>🤖 AI智能识别</h4>
+                        <ul class="feature-list">
+                            <li>支持OpenAI GPT-4V</li>
+                            <li>支持Google Gemini</li>
+                            <li>支持Pollinations AI</li>
+                            <li>支持自定义AI服务</li>
+                            <li>兼容OpenAI接口的AI服务</li>
+                            <li>智能表格识别</li>
+                            <li>自动错误修正</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>📝 文本编辑管理</h4>
+                        <ul class="feature-list">
+                            <li>实时编辑OCR结果</li>
+                            <li>拖拽调整编辑器</li>
+                            <li>支持TXT、Markdown、Word、HTML、RTF导出</li>
+                            <li>批量处理导出</li>
+                            <li>历史记录管理</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>🚀 性能优化</h4>
+                        <ul class="feature-list">
+                            <li>智能图片压缩</li>
+                            <li>并发处理支持</li>
+                            <li>缓存机制优化</li>
+                            <li>增量处理模式</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 快速开始 -->
+            <section id="quick-start" class="section">
+                <h2>🚀 快速开始</h2>
+
+                <div class="steps">
+                    <h4>第一次使用？跟着这些步骤开始：</h4>
+                    <ol class="step-list">
+                        <li><strong>下载安装</strong>：从官方渠道下载并安装识文君</li>
+                        <li><strong>检查依赖</strong>：确保系统依赖已正确安装（详见系统要求部分）</li>
+                        <li><strong>配置AI服务</strong>：选择并配置您的AI服务（详见AI配置部分）</li>
+                        <li><strong>加载文档</strong>：点击"选择文件"加载PDF文档</li>
+                        <li><strong>开始识别</strong>：点击"开始处理"进行文字识别</li>
+                        <li><strong>编辑导出</strong>：编辑识别结果并导出为所需格式</li>
+                    </ol>
+                </div>
+
+                <div class="highlight-box">
+                    <h4>💡 新手提示</h4>
+                    <p>首次启动时会自动显示关于页面，介绍软件的主要功能。建议先用小文档测试，熟悉操作流程后再处理大批量文档。</p>
+                </div>
+            </section>
+
+            <!-- 系统要求 -->
+            <section id="system-requirements" class="section">
+                <h2>💻 系统要求</h2>
+
+                <h3>核心依赖</h3>
+                <div class="highlight-box">
+                    <h4>📦 libvips 图像处理库</h4>
+                    <p>识文君依赖 libvips 库进行PDF页面渲染和图像处理。这是软件正常运行的必需依赖。</p>
+                </div>
+
+                <h3>不同平台的安装方式</h3>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>🍎 macOS</h4>
+                        <p><strong>安装方法：</strong></p>
+                        <div class="code-block">brew install vips</div>
+                        <p>支持 Intel 和 Apple Silicon 芯片</p>
+                        <p><strong>注意：</strong>首次运行前请确保已安装 libvips</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>🪟 Windows</h4>
+                        <p><strong>安装方法：</strong>从 GitHub 下载预编译包</p>
+                        <div class="code-block">https://github.com/libvips/build-win64-mxe/releases</div>
+                        <p>下载 vips-dev-w64-all-8.12.2.zip 并解压到系统路径</p>
+                        <p>支持 Windows 10/11 x64</p>
+                        <p><strong>注意：</strong>首次运行前请确保已正确配置 libvips</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>🐧 Linux</h4>
+                        <p><strong>Ubuntu/Debian：</strong></p>
+                        <div class="code-block">sudo apt-get install libvips-dev</div>
+                        <p><strong>CentOS/RHEL：</strong></p>
+                        <div class="code-block">sudo yum install vips-devel</div>
+                        <p><strong>Fedora：</strong></p>
+                        <div class="code-block">sudo dnf install vips-devel</div>
+                        <p><strong>Arch：</strong></p>
+                        <div class="code-block">sudo pacman -S libvips</div>
+                    </div>
+                </div>
+
+                <div class="steps">
+                    <h4>依赖检查方法：</h4>
+                    <ol class="step-list">
+                        <li>启动识文君应用</li>
+                        <li>软件会自动检测 libvips 是否可用</li>
+                        <li>如果依赖缺失，会在界面上显示相应提示</li>
+                        <li>按照提示安装对应的依赖包</li>
+                    </ol>
+                </div>
+
+                <div class="highlight-box">
+                    <h4>⚠️ 重要说明</h4>
+                    <p><strong>必需依赖：</strong>识文君需要 libvips 库才能正常运行，请在首次使用前安装。<br>
+                    <strong>版本要求：</strong>建议使用 libvips 8.12+ 版本以获得最佳兼容性。<br>
+                    <strong>自动检测：</strong>软件启动时会自动检测依赖是否可用，如有缺失会显示提示。</p>
+                </div>
+            </section>
+
+            <!-- AI配置 -->
+            <section id="ai-config" class="section">
+                <h2>⚙️ AI服务配置</h2>
+
+                <h3>支持的AI服务</h3>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>🔵 OpenAI</h4>
+                        <p>使用GPT-4V模型进行高精度文字识别，支持复杂文档和表格。</p>
+                        <p><strong>推荐用途：</strong>高精度要求的重要文档</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>🟢 Google Gemini</h4>
+                        <p>Google的多模态AI模型，在图像理解方面表现优秀。</p>
+                        <p><strong>推荐用途：</strong>图片文字识别、多语言文档</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>🟡 Pollinations AI</h4>
+                        <p>免费的AI服务，适合日常使用和测试。</p>
+                        <p><strong>推荐用途：</strong>日常文档处理、学习使用</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>🔧 自定义AI服务</h4>
+                        <p>支持任何兼容OpenAI接口的AI服务，包括本地部署的模型。</p>
+                        <p><strong>推荐用途：</strong>企业内部部署、特殊需求定制</p>
+                    </div>
+                </div>
+
+                <div class="steps">
+                    <h4>配置步骤：</h4>
+                    <ol class="step-list">
+                        <li>点击顶部工具栏的"设置"按钮</li>
+                        <li>在AI配置区域选择预设模板（OpenAI、Gemini等）</li>
+                        <li>填入您的API密钥和相关配置</li>
+                        <li>选择OCR模型和文本处理模型</li>
+                        <li>点击💾按钮保存配置，方便下次使用</li>
+                        <li>点击⚙️按钮管理已保存的配置</li>
+                    </ol>
+                </div>
+
+                <div class="highlight-box">
+                    <h4>🔑 API密钥获取</h4>
+                    <p><strong>OpenAI：</strong>访问 platform.openai.com 注册并获取API密钥<br>
+                    <strong>Google Gemini：</strong>访问 ai.google.dev 申请API访问权限<br>
+                    <strong>Pollinations：</strong>无需API密钥，可直接使用<br>
+                    <strong>自定义服务：</strong>根据服务提供商的要求配置API密钥和端点</p>
+                </div>
+            </section>
+
+            <!-- 使用指南 -->
+            <section id="usage" class="section">
+                <h2>📖 详细使用指南</h2>
+
+                <h3>1. 加载文档</h3>
+                <div class="steps">
+                    <ol class="step-list">
+                        <li>点击界面中的"选择文件"按钮</li>
+                        <li>选择PDF文件（目前仅支持PDF格式）</li>
+                        <li>等待文档加载完成</li>
+                        <li>在左侧预览区查看文档内容</li>
+                    </ol>
+                </div>
+
+                <div class="highlight-box">
+                    <h4>📋 支持格式说明</h4>
+                    <p>当前版本仅支持PDF文档识别处理，图片格式支持正在开发中，敬请期待后续版本更新。</p>
+                </div>
+
+                <h3>2. 文字识别</h3>
+                <div class="steps">
+                    <ol class="step-list">
+                        <li>选择要处理的页面（可单页或多页）</li>
+                        <li>点击"开始处理"按钮</li>
+                        <li>观察处理进度，等待识别完成</li>
+                        <li>在右侧查看识别结果</li>
+                    </ol>
+                </div>
+
+                <h3>3. 编辑文本</h3>
+                <div class="steps">
+                    <ol class="step-list">
+                        <li>点击页面右侧的"编辑文本"按钮</li>
+                        <li>在弹出的编辑器中修改识别结果</li>
+                        <li>支持拖拽调整编辑器位置和大小</li>
+                        <li>编辑完成后点击"保存"</li>
+                    </ol>
+                </div>
+
+                <h3>4. AI文本处理</h3>
+                <div class="steps">
+                    <ol class="step-list">
+                        <li>在识别结果区域点击"AI处理"按钮</li>
+                        <li>AI会自动优化文本格式和内容</li>
+                        <li>处理结果支持Markdown渲染显示</li>
+                        <li>可以重新处理或编辑AI处理结果</li>
+                    </ol>
+                </div>
+            </section>
+
+            <!-- 导出功能 -->
+            <section id="export" class="section">
+                <h2>📤 导出功能</h2>
+
+                <h3>支持的导出格式</h3>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>📄 TXT文本</h4>
+                        <p>纯文本格式，兼容性最好，适合简单的文本内容。</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>📝 Markdown</h4>
+                        <p>支持格式化的文本，保留标题、列表、表格等结构。</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>📋 Word文档</h4>
+                        <p>DOCX格式，支持复杂排版，适合正式文档。</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>🌐 HTML网页</h4>
+                        <p>网页格式，支持富文本显示，便于在线查看。</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <h4>📑 RTF富文本</h4>
+                        <p>富文本格式，兼容多种文字处理软件。</p>
+                    </div>
+                </div>
+
+                <div class="steps">
+                    <h4>单页导出：</h4>
+                    <ol class="step-list">
+                        <li>在页面右侧点击"导出"按钮</li>
+                        <li>选择导出格式（TXT、Markdown、Word、HTML、RTF）</li>
+                        <li>选择导出内容（OCR文本或AI处理文本）</li>
+                        <li>点击"导出"完成</li>
+                    </ol>
+                </div>
+
+                <div class="steps">
+                    <h4>批量导出：</h4>
+                    <ol class="step-list">
+                        <li>点击顶部工具栏的"历史记录"按钮</li>
+                        <li>查看所有处理过的文档</li>
+                        <li>选择导出格式</li>
+                        <li>点击"导出"按文档批量导出所有结果</li>
+                    </ol>
+                </div>
+            </section>
+
+            <!-- 常见问题 -->
+            <section id="faq" class="section">
+                <h2>❓ 常见问题</h2>
+
+                <div class="feature-card">
+                    <h4>Q: 识别准确率不高怎么办？</h4>
+                    <p><strong>A:</strong> 尝试以下方法：<br>
+                    • 确保文档图片清晰，分辨率足够<br>
+                    • 选择更适合的AI模型<br>
+                    • 对于复杂文档，可以尝试不同的AI服务<br>
+                    • 使用AI文本处理功能进一步优化结果</p>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Q: API调用失败怎么办？</h4>
+                    <p><strong>A:</strong> 请检查：<br>
+                    • API密钥是否正确<br>
+                    • 网络连接是否正常<br>
+                    • API服务是否有余额或配额<br>
+                    • 尝试切换到其他AI服务</p>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Q: 如何提高处理速度？</h4>
+                    <p><strong>A:</strong> 可以：<br>
+                    • 使用较小的图片分辨率<br>
+                    • 选择响应速度较快的AI服务<br>
+                    • 避免同时处理过多页面<br>
+                    • 利用缓存机制，避免重复处理</p>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Q: 软件启动时提示缺少依赖怎么办？</h4>
+                    <p><strong>A:</strong> 这通常是 libvips 依赖缺失导致的：<br>
+                    • <strong>Linux用户</strong>：运行 <code>sudo apt-get install libvips-dev</code><br>
+                    • <strong>macOS用户</strong>：运行 <code>brew install vips</code><br>
+                    • <strong>Windows用户</strong>：从GitHub下载libvips预编译包并配置<br>
+                    • 安装完成后重新启动应用</p>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Q: PDF页面无法正常显示怎么办？</h4>
+                    <p><strong>A:</strong> 这可能是图像处理问题：<br>
+                    • 确保 libvips 依赖已正确安装<br>
+                    • 检查PDF文件是否损坏<br>
+                    • 尝试重新启动应用<br>
+                    • 如果问题持续，请联系技术支持</p>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Q: 软件是否免费？</h4>
+                    <p><strong>A:</strong> 识文君软件本身个人免费使用，但AI服务可能需要付费。Pollinations AI提供免费服务，适合日常使用。</p>
+                </div>
+            </section>
+
+            <div class="footer">
+                <p>© 2025 识文君 - PDF智能助手 | 让文字识别更智能、更高效！</p>
+                <p style="margin-top: 0.5rem; font-size: 0.9rem;">如有问题或建议，请联系：<a href="mailto:hzruo@outlook.com" style="color: #667eea; text-decoration: none;">hzruo@outlook.com</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 平滑滚动到锚点
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // 添加滚动时的导航高亮效果
+        window.addEventListener('scroll', function() {
+            const sections = document.querySelectorAll('.section');
+            const navLinks = document.querySelectorAll('.nav-link');
+
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.clientHeight;
+                if (scrollY >= (sectionTop - 200)) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(link => {
+                link.style.background = '';
+                link.style.color = '#667eea';
+                if (link.getAttribute('href') === '#' + current) {
+                    link.style.background = 'rgba(102, 126, 234, 0.2)';
+                    link.style.color = '#764ba2';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

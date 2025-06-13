@@ -7,7 +7,7 @@ import ProgressPanel from './components/ProgressPanel.vue'
 import ErrorHandler from './components/ErrorHandler.vue'
 import TextEditor from './components/TextEditor.vue'
 import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion, CheckSystemDependencies, GetInstallInstructions } from '../wailsjs/go/main/App'
-import { EventsOn } from '../wailsjs/runtime/runtime'
+import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime'
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from 'docx'
 
 // 响应式数据
@@ -23,6 +23,7 @@ const processing = ref(false)
 const appVersionInfo = ref<any>(null)
 const systemDependencies = ref<any>(null)
 const showDependencyWarning = ref(false)
+const showAboutDialog = ref(false)
 
 // 编辑器拖拽相关状态
 const editorPosition = ref({ x: 0, y: 0 }) // 初始位置，将在显示时计算居中位置
@@ -55,15 +56,53 @@ const saveExportFormat = (format: string) => {
   localStorage.setItem('app_exportFormat', format)
 }
 
+// 检查是否首次启动
+const checkFirstLaunch = () => {
+  const hasLaunched = localStorage.getItem('app_hasLaunched')
+  if (!hasLaunched) {
+    // 首次启动，显示关于对话框
+    showAboutDialog.value = true
+    // 标记已启动过
+    localStorage.setItem('app_hasLaunched', 'true')
+  }
+}
+
+// 手动显示关于对话框
+const showAbout = () => {
+  showAboutDialog.value = true
+}
+
+// 关闭关于对话框
+const closeAboutDialog = () => {
+  showAboutDialog.value = false
+}
+
+// 打开使用帮助链接
+const openHelp = () => {
+  // 您可以在这里配置帮助链接地址
+  const helpUrl = 'https://pdfseer.netlify.app' // 请替换为您的帮助文档链接
+  BrowserOpenURL(helpUrl)
+}
+
 // 生命周期
 onMounted(async () => {
   loadLastExportFormat()
+
+  // 检查首次启动
+  checkFirstLaunch()
 
   // 加载支持的格式
   try {
     supportedFormats.value = await GetSupportedFormats()
   } catch (error) {
     console.error('获取支持格式失败:', error)
+  }
+
+  // 获取应用版本信息
+  try {
+    appVersionInfo.value = await GetAppVersion()
+  } catch (error) {
+    console.error('获取版本信息失败:', error)
   }
 
   // 加载版本信息
@@ -885,6 +924,11 @@ const generateTextContent = (text: string) => {
         <div class="sidebar-copyright">
           <div class="copyright-content">
             <div class="copyright-text">{{ appVersionInfo?.copyright || '© 2025 识文君 - PDF智能助手' }}</div>
+              <div class="sidebar-links">
+              <span class="about-link-sidebar" @click="showAbout">关于识文君</span>
+              <span class="separator">|</span>
+              <span class="help-link-sidebar" @click="openHelp">使用帮助</span>
+            </div>
             <div class="author-info">{{ appVersionInfo ? `Developed by ${appVersionInfo.author}` : 'Developed by hzruo' }}</div>
             <div class="author-info">{{ appVersionInfo ? `Version: ${appVersionInfo.version}` : 'Version: 1.0.0' }}</div>
           </div>
@@ -1088,6 +1132,127 @@ const generateTextContent = (text: string) => {
           </button>
           <button @click="confirmProcessForce" class="btn btn-reprocess">
             🔄 重新处理
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 关于对话框 -->
+    <div v-if="showAboutDialog" class="about-dialog-overlay" @click="closeAboutDialog">
+      <div class="about-dialog" @click.stop>
+        <div class="dialog-header">
+          <h3>🎯 关于识文君</h3>
+          <button @click="closeAboutDialog" class="close-btn">&times;</button>
+        </div>
+
+        <div class="dialog-content">
+          <div class="about-content">
+            <!-- 应用图标和名称 -->
+            <div class="app-info">
+              <div class="app-icon">📄</div>
+              <h2>识文君</h2>
+              <p class="app-subtitle">PDF智能识别助手</p>
+            </div>
+
+            <!-- 版本信息 -->
+            <div class="version-info">
+              <div class="info-item">
+                <span class="label">版本：</span>
+                <span class="value">{{ appVersionInfo?.version || '1.0.0' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="label">开发者：</span>
+                <span class="value">{{ appVersionInfo?.author || 'hzruo' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="label">联系邮箱：</span>
+                <span class="value email-link">{{ appVersionInfo?.email || 'support@pdfseer.com' }}</span>
+              </div>
+            </div>
+
+            <!-- 功能介绍 -->
+            <div class="features">
+              <h4>✨ 主要功能</h4>
+              <div class="features-grid">
+                <div class="feature-card">
+                  <div class="feature-icon">🔍</div>
+                  <div class="feature-content">
+                    <h5>OCR文字识别</h5>
+                    <p>高精度文字识别技术</p>
+                  </div>
+                </div>
+                <div class="feature-card">
+                  <div class="feature-icon">🤖</div>
+                  <div class="feature-content">
+                    <h5>AI智能处理</h5>
+                    <p>智能文本分析与优化</p>
+                  </div>
+                </div>
+                <div class="feature-card">
+                  <div class="feature-icon">📝</div>
+                  <div class="feature-content">
+                    <h5>多格式导出</h5>
+                    <p>支持多种文档格式</p>
+                  </div>
+                </div>
+                <div class="feature-card">
+                  <div class="feature-icon">📋</div>
+                  <div class="feature-content">
+                    <h5>批量处理</h5>
+                    <p>高效批量文档处理</p>
+                  </div>
+                </div>
+                <div class="feature-card">
+                  <div class="feature-icon">💾</div>
+                  <div class="feature-content">
+                    <h5>历史记录</h5>
+                    <p>完整的处理历史管理</p>
+                  </div>
+                </div>
+                <div class="feature-card">
+                  <div class="feature-icon">⚙️</div>
+                  <div class="feature-content">
+                    <h5>灵活配置</h5>
+                    <p>丰富的个性化设置</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 版权信息 -->
+            <div class="copyright">
+              <p>{{ appVersionInfo?.copyright || '© 2025 识文君 - PDF智能助手' }}</p>
+              <p class="description">让PDF文档处理更智能、更高效</p>
+            </div>
+
+            <!-- 协议说明 -->
+            <div class="license-info">
+              <h4>📋 使用协议</h4>
+              <div class="license-content">
+                <div class="license-item">
+                  <span class="license-title">🔒 隐私保护</span>
+                  <p>本软件承诺保护用户隐私，所有文档处理均在本地进行，不会上传或存储您的文件内容。</p>
+                </div>
+                <div class="license-item">
+                  <span class="license-title">⚖️ 使用条款</span>
+                  <p>本软件个人免费使用，不得进行二次售卖或商业分发，请遵守相关法律法规。</p>
+                </div>
+                <div class="license-item">
+                  <span class="license-title">🛡️ 免责声明</span>
+                  <p>软件按"现状"提供，开发者不对使用过程中可能出现的数据丢失或其他问题承担责任。</p>
+                </div>
+                <div class="license-item">
+                  <span class="license-title">📧 技术支持</span>
+                  <p>如遇问题或建议，请发送邮件至 <span class="email-highlight">{{ appVersionInfo?.email || 'support@pdfseer.com' }}</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-actions">
+          <button @click="closeAboutDialog" class="btn btn-primary">
+            开始使用
           </button>
         </div>
       </div>
@@ -2198,5 +2363,622 @@ const generateTextContent = (text: string) => {
 .sidebar-copyright .copyright-content:hover .author-info {
   opacity: 1;
   color: #666;
+}
+
+/* 使用帮助对话框样式 */
+.help-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fadeIn 0.3s ease;
+}
+
+.help-dialog {
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(8px);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  width: 90%;
+  max-width: 600px;
+  max-height: 85vh;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: popIn 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  /* 改善字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.help-dialog .dialog-header {
+  background: rgba(248, 249, 250, 0.95);
+  padding: 1.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 16px 16px 0 0;
+}
+
+.help-dialog .dialog-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.help-dialog .close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #666;
+  padding: 0.25rem;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.help-dialog .close-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #333;
+  transform: scale(1.1);
+}
+
+.help-dialog .dialog-content {
+  padding: 0;
+  max-height: 65vh;
+  overflow-y: auto;
+  /* 自定义滚动条样式 */
+  scrollbar-width: thin;
+  scrollbar-color: #ccc #f0f0f0;
+}
+
+.help-dialog .dialog-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.help-dialog .dialog-content::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 3px;
+}
+
+.help-dialog .dialog-content::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+.help-dialog .dialog-content::-webkit-scrollbar-thumb:hover {
+  background: #999;
+}
+
+.help-content {
+  padding: 2rem;
+  /* 改善字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.help-section {
+  margin-bottom: 2rem;
+}
+
+.help-section h4 {
+  margin: 0 0 1rem 0;
+  color: #333;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.help-section p {
+  margin: 0 0 1rem 0;
+  color: #555;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.help-dialog .dialog-actions {
+  padding: 1.5rem;
+  background: rgba(248, 249, 250, 0.95);
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: center;
+  border-radius: 0 0 16px 16px;
+}
+
+.help-dialog .dialog-actions .btn {
+  min-width: 120px;
+  padding: 0.75rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.help-dialog .dialog-actions .btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+/* 关于对话框样式 */
+.about-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fadeIn 0.3s ease;
+}
+
+.about-dialog {
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(8px);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  width: 90%;
+  max-width: 520px;
+  max-height: 85vh;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: popIn 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  /* 改善字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.8) translateY(-20px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.about-dialog .dialog-header {
+  background: rgba(248, 249, 250, 0.95);
+  padding: 1.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 16px 16px 0 0;
+}
+
+.about-dialog .dialog-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.about-dialog .close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #666;
+  padding: 0.25rem;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.about-dialog .close-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #333;
+  transform: scale(1.1);
+}
+
+.about-dialog .dialog-content {
+  padding: 0;
+  max-height: 65vh;
+  overflow-y: auto;
+  /* 自定义滚动条样式 */
+  scrollbar-width: thin;
+  scrollbar-color: #ccc #f0f0f0;
+}
+
+.about-dialog .dialog-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.about-dialog .dialog-content::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 3px;
+}
+
+.about-dialog .dialog-content::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+.about-dialog .dialog-content::-webkit-scrollbar-thumb:hover {
+  background: #999;
+}
+
+.about-content {
+  padding: 2rem;
+  text-align: center;
+  /* 改善字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.app-info {
+  margin-bottom: 2rem;
+}
+
+.app-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.1));
+}
+
+.app-info h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 2.2rem;
+  color: #333;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  text-shadow: 0 2px 4px rgba(102, 126, 234, 0.2);
+}
+
+.app-subtitle {
+  margin: 0;
+  color: #666;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.version-info {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  border: 1px solid #e0e0e0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  font-size: 0.95rem;
+  /* 改善字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.info-item:last-child {
+  margin-bottom: 0;
+}
+
+.info-item .label {
+  color: #555;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.info-item .value {
+  color: #222;
+  font-weight: 600;
+  font-size: 0.9rem;
+  /* 使用系统字体而不是等宽字体 */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.email-link {
+  color: #667eea !important;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  /* 改善邮箱字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-weight: 600 !important;
+}
+
+.email-link:hover {
+  color: #764ba2 !important;
+  text-decoration: underline;
+}
+
+.features {
+  text-align: left;
+  margin-bottom: 2rem;
+}
+
+.features h4 {
+  margin: 0 0 1.5rem 0;
+  color: #333;
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.feature-card {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.feature-card:hover {
+  border-color: #667eea;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
+  transform: translateY(-1px);
+}
+
+.feature-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(102, 126, 234, 0.1);
+  border-radius: 8px;
+}
+
+.feature-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.feature-content h5 {
+  margin: 0 0 0.25rem 0;
+  color: #333;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+  /* 改善字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.feature-content p {
+  margin: 0;
+  color: #666;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  /* 改善字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.copyright {
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  padding-top: 1.5rem;
+  color: #666;
+}
+
+.copyright p {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.copyright .description {
+  font-style: italic;
+  color: #999;
+  font-size: 0.85rem;
+}
+
+/* 协议说明样式 */
+.license-info {
+  text-align: left;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.license-info h4 {
+  margin: 0 0 1.5rem 0;
+  color: #333;
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.license-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.license-item {
+  background: rgba(248, 249, 250, 0.9);
+  border-radius: 10px;
+  padding: 1rem;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.license-item:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(102, 126, 234, 0.2);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.license-title {
+  display: block;
+  font-weight: 600;
+  color: #333;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.3;
+}
+
+.license-item p {
+  margin: 0;
+  color: #555;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.email-highlight {
+  color: #667eea;
+  font-weight: 600;
+  background: rgba(102, 126, 234, 0.1);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* 改善字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.about-dialog .dialog-actions {
+  padding: 1.5rem;
+  background: rgba(248, 249, 250, 0.95);
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: center;
+  border-radius: 0 0 16px 16px;
+}
+
+.about-dialog .dialog-actions .btn {
+  min-width: 140px;
+  padding: 0.75rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.about-dialog .dialog-actions .btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+/* 响应式设计 */
+@media (max-width: 480px) {
+  .about-dialog {
+    width: 95%;
+    max-width: none;
+    margin: 1rem;
+  }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .feature-card {
+    padding: 0.75rem;
+  }
+
+  .feature-icon {
+    width: 35px;
+    height: 35px;
+    font-size: 1.3rem;
+  }
+
+  .about-content {
+    padding: 1.5rem;
+  }
+
+  .app-info h2 {
+    font-size: 1.8rem;
+  }
+
+  .version-info {
+    padding: 1rem;
+  }
+
+  .info-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+
+  .info-item .value {
+    font-size: 0.85rem;
+  }
+}
+
+/* 侧边栏链接样式 */
+.sidebar-links {
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.about-link-sidebar,
+.help-link-sidebar {
+  font-size: 0.7rem;
+  color: #667eea;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.2s ease;
+  user-select: none;
+  font-weight: 400;
+}
+
+.about-link-sidebar:hover,
+.help-link-sidebar:hover {
+  color: #764ba2;
+}
+
+.separator {
+  font-size: 0.7rem;
+  color: #999;
+  user-select: none;
 }
 </style>

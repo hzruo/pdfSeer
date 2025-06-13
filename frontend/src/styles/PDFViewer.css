@@ -274,7 +274,7 @@
 }
 
 .image-preview-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.25);
 }
 
 .image-wrapper {
@@ -851,8 +851,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  z-index: 10000;
   backdrop-filter: blur(8px);
+  /* 基于 main-content 区域居中，避免贴着顶部菜单栏 */
+  margin: 80px 1rem 1rem 1rem;
+  border-radius: 16px;
 }
 
 .image-modal {
