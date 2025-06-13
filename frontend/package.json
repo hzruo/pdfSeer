@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "npm run clean && vue-tsc --noEmit && vite build",
+    "build:force": "npm run clean && vue-tsc --noEmit && vite build --force",
+    "clean": "rm -rf dist node_modules/.vite .vite",
     "preview": "vite preview"
   },
   "dependencies": {

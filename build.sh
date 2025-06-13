@@ -5,6 +5,12 @@
 VERSION=${1:-"dev"}
 echo "构建版本: $VERSION"
 
+# 清理缓存
+echo "清理构建缓存..."
+rm -rf build/
+rm -rf frontend/dist/
+rm -rf frontend/node_modules/.vite/
+
 # 构建应用
 echo "正在构建应用..."
 wails build -platform darwin/amd64 -ldflags "-X main.version=$VERSION"
