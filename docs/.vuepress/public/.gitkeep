@@ -1,0 +1,8 @@
+# VuePress Public 目录
+
+将静态资源文件放在这个目录下，如：
+- logo.png
+- favicon.ico
+- 其他图片文件
+
+这些文件会被复制到构建输出的根目录。

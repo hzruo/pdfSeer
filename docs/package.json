@@ -1,0 +1,25 @@
+{
+  "name": "pdfseer-docs",
+  "version": "1.0.0",
+  "description": "识文君 - PDF智能识别助手文档",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vuepress dev",
+    "build": "vuepress build",
+    "serve": "vuepress serve"
+  },
+  "keywords": [
+    "pdf",
+    "ocr",
+    "ai",
+    "documentation"
+  ],
+  "author": "hzruo",
+  "license": "MIT",
+  "devDependencies": {
+    "@vuepress/bundler-vite": "^2.0.0-rc.14",
+    "@vuepress/theme-default": "^2.0.0-rc.14",
+    "vuepress": "^2.0.0-rc.14",
+    "sass-embedded": "^1.69.5"
+  }
+}

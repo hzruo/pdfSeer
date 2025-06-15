@@ -1,0 +1,42 @@
+# VuePress 构建输出
+.vuepress/dist/
+.vuepress/cache/
+.vuepress/.cache/
+.vuepress/.temp/
+
+# 依赖
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 环境变量
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 日志
+logs
+*.log
+
+# 临时文件
+*.tmp
+*.temp
