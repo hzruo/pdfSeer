@@ -6,7 +6,6 @@
 
 >文档地址：
 >- https://pdfseer.netlify.app/
->- https://pdfseer.edgeone.app/
 
 ## ✨ 主要功能
 
