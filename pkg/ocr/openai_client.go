@@ -400,6 +400,11 @@ func (c *OpenAIClient) RecognizeImageFromReader(ctx context.Context, reader io.R
 
 // ProcessWithAI 使用AI处理文本（纠错、总结等）
 func (c *OpenAIClient) ProcessWithAI(ctx context.Context, text string, prompt string) (string, error) {
+	// 检查输入文本是否为空或空字符串
+	if text == "空字符串" || strings.TrimSpace(text) == "" {
+		return "没有需要处理的内容", nil
+	}
+
 	// 等待频率限制
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return "", fmt.Errorf("频率限制等待失败: %w", err)

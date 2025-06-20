@@ -8,6 +8,7 @@ interface Props {
   document: any
   selectedPages: number[]
   supportedFormats?: string[]
+  processing?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -18,10 +19,11 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   'file-select': [filePath: string]
   'page-select': [pageNumbers: number[]]
-  'edit-page': [pageNumber: number]
+  'edit-page': [pageNumber: number, tabType?: string]
   'process-pages': [pageNumbers: number[], forceReprocess?: boolean]
   'page-rendered': [pageNumber: number]
   'ai-processing-complete': [data: { pages: number[], result: string }]
+  'start-batch-ai-processing': [data: { pages: number[], prompt: string }]
 }>()
 
 // 响应式数据
@@ -39,10 +41,13 @@ const isRefreshing = ref(false) // 是否正在刷新文档数据，避免无限
 const extractingNativeText = ref(false) // 是否正在提取原生文本
 
 // AI处理相关状态
-const showAIPromptDialog = ref(false) // 是否显示AI提示词对话框
+const showAIPromptDialog = ref(false) // 是否显示单页AI提示词对话框
+const showBatchAIDialog = ref(false) // 是否显示批量AI处理对话框
 const processingAI = ref(false) // 是否正在进行AI处理
-const aiPrompt = ref('') // AI处理提示词
+const aiPrompt = ref('') // 单页AI处理提示词
+const batchAIPrompt = ref('') // 批量AI处理提示词
 const aiProcessingMessage = ref('正在连接AI服务...') // AI处理状态消息
+const aiBatchPages = ref<number[]>([]) // 批量处理的页面列表
 
 // AI提示词预设
 const promptPresets = [
@@ -284,8 +289,8 @@ const getViewModeLabel = () => {
   return viewMode.value === 'single' ? '单页视图' : '网格视图'
 }
 
-const editPage = (pageNum: number) => {
-  emit('edit-page', pageNum)
+const editPage = (pageNum: number, tabType?: string) => {
+  emit('edit-page', pageNum, tabType || activeTab.value)
 }
 
 const processWithAI = (pageNum: number, forceReprocess = false) => {
@@ -439,11 +444,107 @@ const closeAIPromptDialog = () => {
   aiPrompt.value = ''
 }
 
-const editAIResult = (pageNumber: number) => {
-  // 触发编辑AI结果事件
-  emit('edit-page', pageNumber)
+const closeBatchAIDialog = () => {
+  showBatchAIDialog.value = false
+  batchAIPrompt.value = ''
+  aiBatchPages.value = []
 }
 
+
+
+// 打开单页AI处理对话框
+const openAIPromptDialog = () => {
+  showAIPromptDialog.value = true
+}
+
+// 打开批量AI处理对话框
+const openBatchAIDialog = () => {
+  // 初始化页面选择，默认勾选当前页
+  aiBatchPages.value = [currentPage.value]
+  showBatchAIDialog.value = true
+}
+
+// 批量处理页面选择方法
+const toggleAIBatchPage = (pageNum: number) => {
+  const index = aiBatchPages.value.indexOf(pageNum)
+  if (index > -1) {
+    aiBatchPages.value.splice(index, 1)
+  } else {
+    aiBatchPages.value.push(pageNum)
+  }
+  aiBatchPages.value.sort((a, b) => a - b)
+}
+
+const selectAllPagesForAI = () => {
+  aiBatchPages.value = Array.from({ length: totalPages.value }, (_, i) => i + 1)
+}
+
+const selectSelectedPagesForAI = () => {
+  aiBatchPages.value = [...props.selectedPages]
+}
+
+const clearAIBatchPages = () => {
+  aiBatchPages.value = []
+}
+
+// 检查页面是否有可处理的文本
+const hasProcessableText = (pageNum: number) => {
+  if (!hasDocument.value || pageNum < 1 || pageNum > totalPages.value) return false
+  const page = props.document.pages[pageNum - 1]
+  return page && (page.ocr_text || page.text)
+}
+
+// 检查页面是否已有AI处理结果
+const hasAIResult = (pageNum: number) => {
+  if (!hasDocument.value || pageNum < 1 || pageNum > totalPages.value) return false
+  const page = props.document.pages[pageNum - 1]
+  return page && page.ai_text
+}
+
+// 检查是否有可导出的AI结果
+const hasExportableAIResults = computed(() => {
+  if (!hasDocument.value) return false
+  return props.document.pages.some((page: any) => page.ai_text && page.ai_text.trim().length > 0)
+})
+
+// 导出AI结果
+const exportAIResults = () => {
+  // 获取所有有AI结果的页面
+  const aiPages = props.document.pages
+    .map((page: any, index: number) => ({ page, number: index + 1 }))
+    .filter(({ page }) => page.ai_text && page.ai_text.trim().length > 0)
+    .map(({ number }) => number)
+
+  if (aiPages.length === 0) {
+    window.dispatchEvent(new CustomEvent('show-warning', {
+      detail: '没有可导出的AI处理结果'
+    }))
+    return
+  }
+
+  // 关闭批量AI对话框
+  closeBatchAIDialog()
+
+  // 触发导出AI结果事件
+  window.dispatchEvent(new CustomEvent('export-ai-results', {
+    detail: { pages: aiPages }
+  }))
+}
+
+// 强制刷新组件状态
+const refreshKey = ref(0)
+const forceRefresh = () => {
+  // 通过修改响应式变量来强制组件重新渲染
+  refreshKey.value++
+  console.log('强制刷新组件状态，refreshKey:', refreshKey.value)
+}
+
+// 获取有文本的页面数量
+const getProcessablePageCount = (pages: number[]) => {
+  return pages.filter(pageNum => hasProcessableText(pageNum)).length
+}
+
+// 单页AI处理
 const startAIProcessing = async () => {
   if (!aiPrompt.value.trim() || processingAI.value) return
 
@@ -577,8 +678,70 @@ const startAIProcessing = async () => {
   }
 }
 
+// 批量AI处理
+const startBatchAIProcessing = async () => {
+  if (!batchAIPrompt.value.trim()) {
+    window.dispatchEvent(new CustomEvent('show-warning', {
+      detail: '请输入AI处理提示词'
+    }))
+    return
+  }
+
+  if (aiBatchPages.value.length === 0) {
+    window.dispatchEvent(new CustomEvent('show-warning', {
+      detail: '请选择要处理的页面'
+    }))
+    return
+  }
+
+  // 检查选中页面是否有可处理的文本
+  const processablePages = aiBatchPages.value.filter(pageNum => hasProcessableText(pageNum))
+  const unprocessablePages = aiBatchPages.value.filter(pageNum => !hasProcessableText(pageNum))
+
+  if (unprocessablePages.length > 0) {
+    window.dispatchEvent(new CustomEvent('show-warning', {
+      detail: `第 ${unprocessablePages.join(', ')} 页没有可处理的文本，将跳过这些页面`
+    }))
+  }
+
+  if (processablePages.length === 0) {
+    window.dispatchEvent(new CustomEvent('show-warning', {
+      detail: '所选页面都没有可处理的文本'
+    }))
+    return
+  }
+
+  // 关闭批量AI对话框，显示进度面板
+  const promptText = batchAIPrompt.value
+  closeBatchAIDialog()
+
+  // 触发批量AI处理事件
+  emit('start-batch-ai-processing', {
+    pages: processablePages,
+    prompt: promptText
+  })
+}
+
 // 监听AI处理事件
 onMounted(() => {
+  // 监听关闭批量AI处理弹窗的事件
+  window.addEventListener('close-batch-ai-dialog', () => {
+    closeBatchAIDialog()
+  })
+
+  // 监听文档刷新事件
+  window.addEventListener('document-refreshed', () => {
+    console.log('收到文档刷新事件，更新页面状态')
+    // 强制更新组件，触发重新计算
+    nextTick(() => {
+      // 触发响应式更新
+      if (props.document) {
+        console.log('文档数据已更新，页面状态将刷新')
+        forceRefresh()
+      }
+    })
+  })
+
   // 监听AI处理进度事件
   if (typeof window !== 'undefined' && (window as any).runtime?.EventsOn) {
     const runtime = (window as any).runtime
@@ -803,7 +966,7 @@ onMounted(() => {
                     <button @click="processWithAI(currentPage, true)" class="btn btn-small btn-warning" title="重新进行OCR识别">
                       重新识别
                     </button>
-                    <button @click="editPage(currentPage)" class="btn btn-small edit-btn">
+                    <button @click="editPage(currentPage, 'ocr')" class="btn btn-small edit-btn">
                       编辑文本
                     </button>
                   </div>
@@ -819,15 +982,24 @@ onMounted(() => {
                   <div class="header-buttons">
                     <button
                       v-if="!processingAI && (currentPageData.ocr_text || currentPageData.text)"
-                      @click="showAIPromptDialog = true"
+                      @click="openAIPromptDialog()"
                       class="btn btn-small btn-primary"
                       title="使用AI处理当前页面文本"
                     >
                       AI处理
                     </button>
                     <button
+                      v-if="!processingAI && (currentPageData.ocr_text || currentPageData.text)"
+                      @click="openBatchAIDialog()"
+                      class="btn btn-small btn-warning"
+                      :disabled="props.processing"
+                      title="批量AI处理多个页面"
+                    >
+                      批量AI处理
+                    </button>
+                    <button
                       v-if="currentPageData.ai_text"
-                      @click="editAIResult(currentPage)"
+                      @click="editPage(currentPage, 'ai')"
                       class="btn btn-small edit-btn"
                       title="编辑AI处理结果"
                     >
@@ -860,13 +1032,21 @@ onMounted(() => {
                       您可以使用AI对OCR识别结果或原生文本进行处理，<br>
                       如纠错、总结、翻译、格式化等。
                     </p>
-                    <button
-                      v-if="currentPageData.ocr_text || currentPageData.text"
-                      @click="showAIPromptDialog = true"
-                      class="btn btn-primary"
-                    >
-                      开始AI处理
-                    </button>
+                    <div v-if="currentPageData.ocr_text || currentPageData.text" class="ai-action-buttons">
+                      <button
+                        @click="openAIPromptDialog()"
+                        class="btn btn-primary"
+                      >
+                        AI处理
+                      </button>
+                      <!-- <button
+                        @click="openBatchAIDialog()"
+                        class="btn btn-warning"
+                        :disabled="props.processing"
+                      >
+                        批量AI处理
+                      </button> -->
+                    </div>
                     <p v-else class="empty-hint">
                       请先进行OCR识别或提取原生文本
                     </p>
@@ -998,7 +1178,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- AI提示词输入对话框 -->
+    <!-- 单页AI提示词输入对话框 -->
     <div v-if="showAIPromptDialog" class="modal-overlay" @click="closeAIPromptDialog">
       <div class="ai-prompt-modal" @click.stop>
         <div class="modal-header">
@@ -1017,15 +1197,17 @@ onMounted(() => {
             ></textarea>
             <div class="prompt-presets">
               <span class="presets-label">常用指令：</span>
-              <button
-                v-for="preset in promptPresets"
-                :key="preset.name"
-                @click="aiPrompt = preset.prompt"
-                class="preset-btn"
-                :title="preset.description"
-              >
-                {{ preset.name }}
-              </button>
+              <div class="preset-buttons">
+                <button
+                  v-for="preset in promptPresets"
+                  :key="preset.name"
+                  @click="aiPrompt = preset.prompt"
+                  class="preset-btn"
+                  :title="preset.description"
+                >
+                  {{ preset.name }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1040,6 +1222,117 @@ onMounted(() => {
           >
             {{ processingAI ? '处理中...' : '开始处理' }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 批量AI处理对话框 -->
+    <div v-if="showBatchAIDialog" class="modal-overlay" @click="closeBatchAIDialog">
+      <div class="batch-ai-modal" @click.stop>
+        <div class="modal-header">
+          <h3>批量AI处理设置</h3>
+          <button @click="closeBatchAIDialog" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- 页面选择 -->
+          <div class="batch-pages-section">
+            <label class="section-label">选择页面：</label>
+            <div class="page-selection-controls">
+              <button @click="aiBatchPages = [currentPage]" class="btn btn-small">
+                当前页 ({{ currentPage }})
+              </button>
+              <button @click="selectAllPagesForAI" class="btn btn-small">
+                全部页面 ({{ totalPages }})
+              </button>
+              <button
+                v-if="selectedPages.length > 0"
+                @click="selectSelectedPagesForAI"
+                class="btn btn-small"
+              >
+                已选择页面 ({{ selectedPages.length }})
+              </button>
+              <button @click="clearAIBatchPages" class="btn btn-small btn-secondary">
+                清空选择
+              </button>
+            </div>
+
+            <div class="pages-grid-selector" :key="`pages-grid-${refreshKey}`">
+              <div
+                v-for="pageNum in totalPages"
+                :key="`page-${pageNum}-${refreshKey}`"
+                class="page-selector-item"
+                :class="{
+                  'selected': aiBatchPages.includes(pageNum),
+                  'current': pageNum === currentPage,
+                  'has-text': hasProcessableText(pageNum),
+                  'no-text': !hasProcessableText(pageNum),
+                  'has-ai': hasAIResult(pageNum)
+                }"
+                @click="toggleAIBatchPage(pageNum)"
+              >
+                <span class="page-number">{{ pageNum }}</span>
+                <span v-if="!hasProcessableText(pageNum)" class="no-text-indicator" title="该页面没有可处理的文本">⚠️</span>
+                <span v-else-if="hasAIResult(pageNum)" class="ai-indicator" title="该页面已有AI处理结果">✨</span>
+              </div>
+            </div>
+
+            <div class="batch-summary">
+              <span>已选择 {{ aiBatchPages.length }} 页</span>
+              <span v-if="aiBatchPages.length > 0">
+                （其中 {{ getProcessablePageCount(aiBatchPages) }} 页有可处理文本）
+              </span>
+            </div>
+          </div>
+
+          <!-- 提示词输入 -->
+          <div class="prompt-section">
+            <label for="batch-ai-prompt">处理指令：</label>
+            <textarea
+              id="batch-ai-prompt"
+              v-model="batchAIPrompt"
+              placeholder="请输入AI处理指令，例如：&#10;- 纠正OCR识别错误&#10;- 总结文本内容&#10;- 翻译为英文&#10;- 格式化为Markdown&#10;- 提取关键信息"
+              class="prompt-textarea"
+              rows="6"
+            ></textarea>
+            <div class="prompt-presets">
+              <span class="presets-label">常用指令：</span>
+              <div class="preset-buttons">
+                <button
+                  v-for="preset in promptPresets"
+                  :key="preset.name"
+                  @click="batchAIPrompt = preset.prompt"
+                  class="preset-btn"
+                  :title="preset.description"
+                >
+                  {{ preset.name }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div class="footer-left">
+            <button
+              v-if="hasExportableAIResults"
+              @click="exportAIResults"
+              class="btn btn-success"
+              title="导出所有AI处理结果"
+            >
+              📤 导出结果
+            </button>
+          </div>
+          <div class="footer-right">
+            <button @click="closeBatchAIDialog" class="btn btn-secondary">
+              取消
+            </button>
+            <button
+              @click="startBatchAIProcessing"
+              class="btn btn-primary"
+              :disabled="!batchAIPrompt.trim() || aiBatchPages.length === 0"
+            >
+              开始批量处理
+            </button>
+          </div>
         </div>
       </div>
     </div>

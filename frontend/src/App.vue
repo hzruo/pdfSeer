@@ -6,9 +6,10 @@ import HistoryPanel from './components/HistoryPanel.vue'
 import ProgressPanel from './components/ProgressPanel.vue'
 import ErrorHandler from './components/ErrorHandler.vue'
 import TextEditor from './components/TextEditor.vue'
-import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion, CheckSystemDependencies, GetInstallInstructions, CancelProcessing } from '../wailsjs/go/main/App'
+import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion, CheckSystemDependencies, GetInstallInstructions, CancelProcessing, ProcessWithAIBatch, ProcessWithAIBatchForce, CheckAIProcessedPages } from '../wailsjs/go/main/App'
 import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime'
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from 'docx'
+import { renderMarkdown } from './utils/markdown'
 
 // 响应式数据
 const currentDocument = ref<any>(null)
@@ -16,9 +17,14 @@ const selectedPages = ref<number[]>([])
 const showConfig = ref(false)
 const showHistory = ref(false)
 const showExportDialog = ref(false)
-const exportFormat = ref('txt')
+const exportFormat = ref(localStorage.getItem('exportFormat') || 'txt')
+const exportTextType = ref(localStorage.getItem('exportTextType') || 'auto') // auto, ocr, ai
+const isExportingAIResults = ref(false)
+const lastSuccessMessage = ref('')
+const lastSuccessTime = ref(0)
 const showTextEditor = ref(false)
 const editingPageNumber = ref(0)
+const editingTabType = ref<string>('ocr')
 const processing = ref(false)
 const appVersionInfo = ref<any>(null)
 const systemDependencies = ref<any>(null)
@@ -43,6 +49,8 @@ const progress = ref({
 const processingState = ref(0) // 0: idle, 1: running, 2: paused, 3: cancelling
 const showProcessConfirmDialog = ref(false)
 const processConfirmData = ref<any>(null)
+const showAIConfirmDialog = ref(false)
+const aiConfirmData = ref<any>(null)
 
 // 从localStorage加载上次的导出格式
 const loadLastExportFormat = () => {
@@ -148,29 +156,20 @@ onMounted(async () => {
   EventsOn('processing-complete', async (data: any) => {
     processing.value = false
     processingState.value = 0 // idle
-    console.log('处理完成:', data)
+    console.log('OCR处理完成:', data)
 
-    // 强制刷新文档数据，但保持当前页面状态
-    try {
-      const refreshedDoc = await GetCurrentDocument()
-      if (refreshedDoc) {
-        currentDocument.value = refreshedDoc
-        console.log('文档数据已刷新:', refreshedDoc)
+    // 使用统一的刷新机制，确保页面正确刷新，传递处理过的页面信息
+    await refreshCurrentDocument(data.processedPages || [])
 
-        // 通知 PDFViewer 保持当前页面，不要跳转
-        window.dispatchEvent(new CustomEvent('document-refreshed', {
-          detail: {
-            document: refreshedDoc,
-            keepCurrentPage: true,
-            processedPages: data.processedPages || []
-          }
-        }))
-      } else {
-        currentDocument.value = data.document
-      }
-    } catch (error) {
-      console.error('刷新文档数据失败:', error)
-      currentDocument.value = data.document
+    // 显示完成提示
+    if (data.total_processed) {
+      window.dispatchEvent(new CustomEvent('show-success', {
+        detail: `批量OCR处理完成：成功处理 ${data.total_processed} 页`
+      }))
+    } else {
+      window.dispatchEvent(new CustomEvent('show-success', {
+        detail: 'OCR处理完成'
+      }))
     }
   })
 
@@ -198,6 +197,24 @@ onMounted(async () => {
 
   EventsOn('ai-processing-complete', (data: any) => {
     console.log('AI处理完成:', data)
+
+    // 关闭进度面板
+    processing.value = false
+    processingState.value = 0 // idle
+
+    // 刷新当前文档数据
+    refreshCurrentDocument()
+
+    // 显示完成提示
+    if (data.successCount && data.totalCount) {
+      window.dispatchEvent(new CustomEvent('show-success', {
+        detail: `批量AI处理完成：成功处理 ${data.successCount}/${data.totalCount} 页`
+      }))
+    } else {
+      window.dispatchEvent(new CustomEvent('show-success', {
+        detail: 'AI处理完成'
+      }))
+    }
   })
 
   EventsOn('processing-paused', (data: any) => {
@@ -206,6 +223,56 @@ onMounted(async () => {
     window.dispatchEvent(new CustomEvent('show-info', {
       detail: data.message || '批量处理已暂停'
     }))
+  })
+
+  // 监听单页OCR处理完成事件，实现实时刷新
+  EventsOn('page-processed', async (data: any) => {
+    console.log('单页OCR处理完成:', data)
+
+    // 立即刷新文档数据以显示最新的处理结果
+    try {
+      const refreshedDoc = await GetCurrentDocument()
+      if (refreshedDoc) {
+        currentDocument.value = refreshedDoc
+        console.log(`第${data.pageNumber}页OCR处理完成，文档数据已刷新`)
+
+        // 通知 PDFViewer 保持当前页面，刷新指定页面
+        window.dispatchEvent(new CustomEvent('document-refreshed', {
+          detail: {
+            document: refreshedDoc,
+            keepCurrentPage: true,
+            processedPages: [data.pageNumber]
+          }
+        }))
+      }
+    } catch (error) {
+      console.error('刷新文档数据失败:', error)
+    }
+  })
+
+  // 监听单页AI处理完成事件，实现实时刷新
+  EventsOn('ai-page-processed', async (data: any) => {
+    console.log('单页AI处理完成:', data)
+
+    // 立即刷新文档数据以显示最新的AI处理结果
+    try {
+      const refreshedDoc = await GetCurrentDocument()
+      if (refreshedDoc) {
+        currentDocument.value = refreshedDoc
+        console.log(`第${data.pageNumber}页AI处理完成，文档数据已刷新`)
+
+        // 通知 PDFViewer 保持当前页面，刷新指定页面
+        window.dispatchEvent(new CustomEvent('document-refreshed', {
+          detail: {
+            document: refreshedDoc,
+            keepCurrentPage: true,
+            processedPages: [data.pageNumber]
+          }
+        }))
+      }
+    } catch (error) {
+      console.error('刷新文档数据失败:', error)
+    }
   })
 
   EventsOn('processing-resumed', (data: any) => {
@@ -241,11 +308,27 @@ onMounted(async () => {
   window.addEventListener('show-success', (event: any) => {
     window.dispatchEvent(new CustomEvent('success', { detail: event.detail }))
   })
+
+  // 监听导出AI结果事件
+  window.addEventListener('export-ai-results', (event: any) => {
+    const { pages } = event.detail
+    handleExportAIResults(pages)
+  })
+})
+
+// 监听导出格式变化，实时保存
+watch(exportFormat, (newFormat) => {
+  localStorage.setItem('exportFormat', newFormat)
 })
 
 // 监听导出格式变化，实时保存
 watch(exportFormat, (newFormat) => {
   saveExportFormat(newFormat)
+})
+
+// 监听文本类型变化，实时保存
+watch(exportTextType, (newType) => {
+  localStorage.setItem('exportTextType', newType)
 })
 
 // 处理历史记录删除事件
@@ -285,6 +368,34 @@ const handleHistoryRecordDeleted = async (event: any) => {
 const hasProcessedPages = computed(() => {
   return currentDocument.value?.pages?.some((page: any) => page.processed) || false
 })
+
+// 根据选择的文本类型计算可导出页面数
+const getExportablePageCount = () => {
+  if (!currentDocument.value?.pages) return 0
+
+  if (isExportingAIResults.value) {
+    // AI结果导出：统计有AI文本的页面
+    return currentDocument.value.pages.filter((page: any) =>
+      page.ai_text && page.ai_text.trim().length > 0
+    ).length
+  }
+
+  // 普通导出：根据选择的文本类型统计
+  return currentDocument.value.pages.filter((page: any) => {
+    if (exportTextType.value === 'ocr') {
+      // 只统计有OCR文本的页面
+      return page.ocr_text && page.ocr_text.trim().length > 0
+    } else if (exportTextType.value === 'ai') {
+      // 只统计有AI文本的页面
+      return page.ai_text && page.ai_text.trim().length > 0
+    } else {
+      // 智能选择：统计有任意文本的页面
+      return (page.ocr_text && page.ocr_text.trim().length > 0) ||
+             (page.ai_text && page.ai_text.trim().length > 0) ||
+             (page.text && page.text.trim().length > 0)
+    }
+  }).length
+}
 
 // 方法
 const handleFileSelect = async (filePath: string) => {
@@ -364,6 +475,61 @@ const cancelProcess = () => {
   processConfirmData.value = null
 }
 
+// AI确认处理（使用缓存）
+const confirmAIProcessWithCache = async () => {
+  if (aiConfirmData.value) {
+    const unprocessedPages = aiConfirmData.value.unprocessedPages
+
+    // 检查是否有未处理的页面
+    if (unprocessedPages.length === 0) {
+      // 所有页面都已处理，触发导出AI结果
+      const processedPages = aiConfirmData.value.processedPages
+
+      showAIConfirmDialog.value = false
+      aiConfirmData.value = null
+
+      // 通知PDFViewer关闭批量处理弹窗
+      window.dispatchEvent(new CustomEvent('close-batch-ai-dialog'))
+
+      // 触发导出AI处理结果
+      handleExportAIResults(processedPages)
+      return
+    }
+
+    // 有未处理的页面，开始处理
+    await startBatchAIProcessing(unprocessedPages, aiConfirmData.value.prompt, false)
+
+    // 关闭AI确认弹窗和批量处理弹窗
+    showAIConfirmDialog.value = false
+    aiConfirmData.value = null
+
+    // 通知PDFViewer关闭批量处理弹窗
+    window.dispatchEvent(new CustomEvent('close-batch-ai-dialog'))
+  }
+}
+
+// AI确认强制重新处理
+const confirmAIProcessForce = async () => {
+  if (aiConfirmData.value) {
+    // 重新处理所有页面
+    await startBatchAIProcessing(aiConfirmData.value.allPages, aiConfirmData.value.prompt, true)
+
+    // 关闭AI确认弹窗和批量处理弹窗
+    showAIConfirmDialog.value = false
+    aiConfirmData.value = null
+
+    // 通知PDFViewer关闭批量处理弹窗
+    window.dispatchEvent(new CustomEvent('close-batch-ai-dialog'))
+  }
+}
+
+// 取消AI处理（保持批量处理弹窗打开）
+const cancelAIProcess = () => {
+  showAIConfirmDialog.value = false
+  aiConfirmData.value = null
+  // 不关闭批量处理弹窗，用户可以继续操作
+}
+
 // 暂停处理
 const handlePauseProcessing = () => {
   processingState.value = 2 // paused
@@ -429,8 +595,29 @@ const formatPageList = (pages: number[] | undefined) => {
   return `${first} ... ${last}`
 }
 
-const handleEditPage = (pageNumber: number) => {
+// 获取文档名（智能提取）
+const getDocumentName = () => {
+  if (!currentDocument.value) return '文档'
+
+  // 优先使用title字段
+  if (currentDocument.value.title && currentDocument.value.title.trim()) {
+    return currentDocument.value.title.trim()
+  }
+
+  // 如果title为空，从file_path提取文件名
+  if (currentDocument.value.file_path) {
+    const fileName = currentDocument.value.file_path.split(/[/\\]/).pop() || '文档'
+    // 移除文件扩展名
+    return fileName.replace(/\.[^/.]+$/, '')
+  }
+
+  // 最后的备用方案
+  return '文档'
+}
+
+const handleEditPage = (pageNumber: number, tabType?: string) => {
   editingPageNumber.value = pageNumber
+  editingTabType.value = tabType || 'ocr' // 默认为OCR tab
   // 计算居中位置
   centerEditor()
   showTextEditor.value = true
@@ -447,6 +634,28 @@ const handleTextUpdated = (pageNumber: number, textType: string, text: string) =
         page.ai_text = text
       }
     }
+  }
+}
+
+// 刷新当前文档数据
+const refreshCurrentDocument = async (processedPages?: number[]) => {
+  try {
+    const refreshedDoc = await GetCurrentDocument()
+    if (refreshedDoc) {
+      currentDocument.value = refreshedDoc
+      console.log('文档数据已刷新')
+
+      // 通知 PDFViewer 保持当前页面，不要跳转
+      window.dispatchEvent(new CustomEvent('document-refreshed', {
+        detail: {
+          document: refreshedDoc,
+          keepCurrentPage: true,
+          processedPages: processedPages || []
+        }
+      }))
+    }
+  } catch (error) {
+    console.error('刷新文档数据失败:', error)
   }
 }
 
@@ -484,6 +693,72 @@ const handleAIProcessingComplete = async (data: { pages: number[], result: strin
     }
   } catch (error) {
     console.error('刷新文档数据失败:', error)
+  }
+}
+
+// 处理批量AI处理请求
+const handleStartBatchAIProcessing = async (data: { pages: number[], prompt: string }) => {
+  console.log('开始批量AI处理:', data)
+
+  try {
+    // 检查页面AI处理状态
+    const checkResult = await CheckAIProcessedPages(data.pages)
+
+    if (checkResult.processed_count > 0) {
+      // 有已处理的页面，显示确认对话框
+      const processedPages = checkResult.processed_pages as number[]
+      const unprocessedPages = checkResult.unprocessed_pages as number[]
+
+      // 显示AI处理确认对话框
+      showAIConfirmDialog.value = true
+      aiConfirmData.value = {
+        totalPages: data.pages.length,
+        processedPages: processedPages,
+        unprocessedPages: unprocessedPages,
+        allPages: data.pages,
+        prompt: data.prompt
+      }
+    } else {
+      // 没有已处理的页面，直接开始处理
+      await startBatchAIProcessing(data.pages, data.prompt, false)
+    }
+
+  } catch (error) {
+    console.error('批量AI处理失败:', error)
+    window.dispatchEvent(new CustomEvent('show-error', {
+      detail: `批量AI处理失败: ${error}`
+    }))
+  }
+}
+
+// 实际开始批量AI处理
+const startBatchAIProcessing = async (pages: number[], prompt: string, forceReprocess: boolean) => {
+  try {
+    // 显示进度面板
+    processing.value = true
+    processingState.value = 1 // processing
+    progress.value = {
+      total: pages.length,
+      processed: 0,
+      currentPage: 0,
+      status: '准备开始AI处理...'
+    }
+
+    // 调用后端批量AI处理方法
+    if (forceReprocess) {
+      await ProcessWithAIBatchForce(pages, prompt)
+    } else {
+      await ProcessWithAIBatch(pages, prompt)
+    }
+
+  } catch (error) {
+    console.error('批量AI处理失败:', error)
+    processing.value = false
+    processingState.value = 0 // idle
+
+    window.dispatchEvent(new CustomEvent('show-error', {
+      detail: `批量AI处理失败: ${error}`
+    }))
   }
 }
 
@@ -613,9 +888,33 @@ const stopResizeEditor = () => {
 
 const handleExport = async () => {
   try {
-    // 生成默认文件名
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
-    const defaultFileName = `${currentDocument.value?.title || 'PDF处理结果'}_${timestamp}.${exportFormat.value}`
+    // 检查是否有可导出的内容
+    const exportableCount = getExportablePageCount()
+    if (exportableCount === 0) {
+      window.dispatchEvent(new CustomEvent('warning', {
+        detail: '当前选择的文本类型没有可导出的内容，请选择其他文本类型或确保文档已处理'
+      }))
+      return
+    }
+
+    // 生成默认文件名，根据导出类型添加标识
+    const timestamp = getLocalTimestamp()
+    let typeLabel = ''
+
+    if (isExportingAIResults.value) {
+      typeLabel = '_AI批量处理'
+    } else {
+      // 根据选择的文本类型添加标识
+      if (exportTextType.value === 'ocr') {
+        typeLabel = '_OCR识别'
+      } else if (exportTextType.value === 'ai') {
+        typeLabel = '_AI处理'
+      } else {
+        typeLabel = '_智能选择'
+      }
+    }
+
+    const defaultFileName = `${currentDocument.value?.title || 'PDF处理结果'}${typeLabel}_${timestamp}.${exportFormat.value}`
 
     if (exportFormat.value === 'docx') {
       // 显示生成提示
@@ -636,17 +935,17 @@ const handleExport = async () => {
 
       if (!filePath) {
         showExportDialog.value = false
+        isExportingAIResults.value = false
         return
       }
 
       showExportDialog.value = false
+      isExportingAIResults.value = false
 
-      window.dispatchEvent(new CustomEvent('show-success', {
-        detail: `导出成功：${filePath}`
-      }))
+      showSuccessMessage(`导出成功：${filePath}`)
     } else {
-      // 其他格式使用后端保存
-      const result = await ExportProcessingResults(exportFormat.value)
+      // 其他格式使用前端生成内容
+      const result = await generateExportContent(exportFormat.value)
 
       const filePath = await SaveFileWithDialog(result, defaultFileName, [
         {
@@ -656,21 +955,459 @@ const handleExport = async () => {
       ])
 
       if (!filePath) {
+        isExportingAIResults.value = false
         return
       }
 
       showExportDialog.value = false
+      isExportingAIResults.value = false
 
-      window.dispatchEvent(new CustomEvent('show-success', {
-        detail: `导出成功：${filePath}`
-      }))
+      showSuccessMessage(`导出成功：${filePath}`)
     }
   } catch (error) {
     console.error('导出失败:', error)
+    isExportingAIResults.value = false
     window.dispatchEvent(new CustomEvent('show-error', {
       detail: `导出失败：${error}`
     }))
   }
+}
+
+// 导出AI处理结果
+const handleExportAIResults = async (pageNumbers: number[]) => {
+  try {
+    // 设置一个标志，表示这是AI结果导出
+    isExportingAIResults.value = true
+
+    // 如果用户没有保存过格式偏好，AI导出默认使用markdown
+    if (!localStorage.getItem('exportFormat')) {
+      exportFormat.value = 'markdown'
+    }
+
+    // 显示导出对话框
+    showExportDialog.value = true
+
+  } catch (error) {
+    console.error('导出AI结果失败:', error)
+    isExportingAIResults.value = false
+    window.dispatchEvent(new CustomEvent('show-error', {
+      detail: `导出AI结果失败：${error}`
+    }))
+  }
+}
+
+// 生成导出内容
+const generateExportContent = async (format: string): Promise<string> => {
+  if (!currentDocument.value || !currentDocument.value.pages) {
+    throw new Error('没有可导出的内容')
+  }
+
+  // 获取所有已处理的页面
+  const processedPages = currentDocument.value.pages.filter((page: any) => page.processed)
+
+  if (processedPages.length === 0) {
+    throw new Error('没有已处理的页面可以导出')
+  }
+
+  // 合并所有页面的文本
+  let allText = ''
+  for (let i = 0; i < processedPages.length; i++) {
+    const page = processedPages[i]
+    // 根据导出类型选择文本
+    let text = ''
+    if (isExportingAIResults.value) {
+      // AI导出：根据格式决定是否渲染
+      if (exportFormat.value === 'markdown') {
+        // markdown格式：导出原始markdown源码
+        text = page.ai_text || ''
+      } else if (exportFormat.value === 'html') {
+        // html格式：导出渲染后的HTML
+        text = renderMarkdown(page.ai_text || '')
+      } else {
+        // 其他格式（txt、rtf）：导出渲染后转换的纯文本
+        text = convertMarkdownToPlainText(page.ai_text || '')
+      }
+    } else {
+      // 普通导出：根据用户选择的文本类型
+      if (exportTextType.value === 'ocr') {
+        // 只导出OCR文本
+        text = page.ocr_text || ''
+      } else if (exportTextType.value === 'ai') {
+        // 只导出AI文本
+        if (exportFormat.value === 'markdown') {
+          text = page.ai_text || ''
+        } else if (exportFormat.value === 'html') {
+          text = renderMarkdown(page.ai_text || '')
+        } else {
+          text = convertMarkdownToPlainText(page.ai_text || '')
+        }
+      } else {
+        // 智能选择：优先OCR，其次AI，最后原生
+        text = page.ocr_text || page.ai_text || page.text || ''
+      }
+    }
+
+    if (text) {
+      if (i > 0) {
+        allText += '\n\n' // 页面间分隔
+      }
+      allText += text
+    }
+  }
+
+  return allText
+}
+
+
+// 将markdown转换为纯文本（通过HTML渲染）
+const convertMarkdownToPlainText = (markdown: string): string => {
+  if (!markdown) return ''
+
+  try {
+    // 首先渲染markdown为HTML
+    const html = renderMarkdown(markdown)
+
+    // 创建临时DOM元素来提取纯文本
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = html
+
+    // 获取纯文本内容
+    const plainText = tempDiv.textContent || tempDiv.innerText || ''
+
+    // 清理多余的空行和空格
+    return plainText
+      .replace(/\n{3,}/g, '\n\n') // 多个换行符合并为两个
+      .replace(/[ \t]+/g, ' ') // 多个空格合并为一个
+      .trim()
+  } catch (error) {
+    console.error('转换markdown为纯文本失败:', error)
+    // 如果转换失败，返回原始markdown
+    return markdown
+  }
+}
+
+// 将HTML转换为DOCX内容（保持格式）
+const convertHtmlToDocxContent = (markdown: string): (Paragraph | Table)[] => {
+  if (!markdown) return []
+
+  try {
+    // 渲染markdown为HTML
+    const html = renderMarkdown(markdown)
+
+    // 创建临时DOM元素
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = html
+
+    const content: (Paragraph | Table)[] = []
+
+    // 遍历所有子元素
+    const processElement = (element: Element): void => {
+      const tagName = element.tagName.toLowerCase()
+
+      switch (tagName) {
+        case 'h1':
+        case 'h2':
+        case 'h3':
+        case 'h4':
+        case 'h5':
+        case 'h6':
+          const level = parseInt(tagName.charAt(1))
+          const runs = parseHtmlElement(element)
+          content.push(new Paragraph({
+            children: runs.map(run => new TextRun({
+              ...run,
+              bold: true,
+              size: Math.max(32 - level * 3, 20) // 更大的字体差异
+            })),
+            spacing: { before: 300, after: 150 }
+          }))
+          break
+
+        case 'p':
+          const pRuns = parseHtmlElement(element)
+          if (pRuns.length > 0) {
+            content.push(new Paragraph({
+              children: pRuns,
+              spacing: { after: 150 }
+            }))
+          }
+          break
+
+        case 'ul':
+        case 'ol':
+          element.querySelectorAll('li').forEach((li) => {
+            const liRuns = parseHtmlElement(li)
+            if (liRuns.length > 0) {
+              content.push(new Paragraph({
+                children: liRuns,
+                bullet: tagName === 'ul' ? { level: 0 } : undefined,
+                numbering: tagName === 'ol' ? { reference: 'default', level: 0 } : undefined,
+                spacing: { after: 100 }
+              }))
+            }
+          })
+          break
+
+        case 'table':
+          content.push(convertHtmlTableToDocx(element as HTMLTableElement))
+          break
+
+        case 'hr':
+          // 跳过分隔线，不在DOCX中显示
+          break
+
+        case 'blockquote':
+          const quoteRuns = parseHtmlElement(element)
+          if (quoteRuns.length > 0) {
+            content.push(new Paragraph({
+              children: quoteRuns,
+              indent: { left: 720 }, // 缩进
+              spacing: { after: 150 },
+              border: {
+                left: {
+                  color: 'CCCCCC',
+                  size: 6,
+                  style: 'single'
+                }
+              }
+            }))
+          }
+          break
+
+        case 'pre':
+          // 代码块
+          const codeRuns = parseHtmlElement(element)
+          if (codeRuns.length > 0) {
+            content.push(new Paragraph({
+              children: codeRuns.map(run => new TextRun({
+                ...run,
+                font: 'Courier New',
+                size: 18
+              })),
+              spacing: { before: 150, after: 150 },
+              indent: { left: 360 }
+            }))
+          }
+          break
+
+        case 'div':
+        case 'span':
+          // 对于div和span，直接处理内容
+          const divRuns = parseHtmlElement(element)
+          if (divRuns.length > 0) {
+            content.push(new Paragraph({
+              children: divRuns,
+              spacing: { after: 100 }
+            }))
+          }
+          break
+
+        default:
+          // 对于其他元素，递归处理子元素
+          Array.from(element.children).forEach(child => {
+            processElement(child)
+          })
+          break
+      }
+    }
+
+    // 处理所有子元素
+    Array.from(tempDiv.children).forEach(child => {
+      processElement(child)
+    })
+
+    return content.length > 0 ? content : [new Paragraph({
+      children: [new TextRun('内容为空')]
+    })]
+
+  } catch (error) {
+    console.error('转换HTML为DOCX内容失败:', error)
+    return [new Paragraph({
+      children: [new TextRun('内容转换失败')]
+    })]
+  }
+}
+
+// 解析HTML元素为TextRun数组（改进版，支持嵌套格式）
+const parseHtmlElement = (element: Element): TextRun[] => {
+  const runs: TextRun[] = []
+
+  const processNode = (node: Node, inheritedFormat: any = {}): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || ''
+      if (text.trim()) {
+        runs.push(new TextRun({
+          text: text,
+          ...inheritedFormat
+        }))
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const elem = node as Element
+      const tagName = elem.tagName.toLowerCase()
+
+      // 合并当前元素的格式与继承的格式
+      const currentFormat = { ...inheritedFormat }
+
+      switch (tagName) {
+        case 'strong':
+        case 'b':
+          currentFormat.bold = true
+          break
+        case 'em':
+        case 'i':
+          currentFormat.italics = true
+          break
+        case 'code':
+          currentFormat.font = 'Courier New'
+          currentFormat.size = 20
+          break
+        case 'u':
+          currentFormat.underline = {}
+          break
+        case 'del':
+        case 's':
+          currentFormat.strike = true
+          break
+      }
+
+      // 递归处理子节点，传递合并后的格式
+      Array.from(elem.childNodes).forEach(child => {
+        processNode(child, currentFormat)
+      })
+    }
+  }
+
+  Array.from(element.childNodes).forEach(child => {
+    processNode(child)
+  })
+
+  return runs.length > 0 ? runs : [new TextRun(element.textContent || '')]
+}
+
+// 转换HTML表格为DOCX表格（改进版）
+const convertHtmlTableToDocx = (table: HTMLTableElement): Table => {
+  const rows: TableRow[] = []
+
+  try {
+    const tableRows = table.querySelectorAll('tr')
+
+    tableRows.forEach((tr) => {
+      const cells: TableCell[] = []
+      const tableCells = tr.querySelectorAll('td, th')
+
+      tableCells.forEach(cell => {
+        const runs = parseHtmlElement(cell)
+        const isHeader = cell.tagName.toLowerCase() === 'th'
+
+        // 为表头和普通单元格应用不同的样式
+        const cellRuns = isHeader ?
+          runs.map(run => new TextRun({
+            ...run,
+            bold: true,
+            size: 22
+          })) :
+          runs
+
+        cells.push(new TableCell({
+          children: [new Paragraph({
+            children: cellRuns.length > 0 ? cellRuns : [new TextRun(cell.textContent || '')],
+            alignment: isHeader ? 'center' : 'left'
+          })],
+          width: {
+            size: Math.floor(100 / tableCells.length),
+            type: WidthType.PERCENTAGE,
+          },
+          margins: {
+            top: 100,
+            bottom: 100,
+            left: 150,
+            right: 150,
+          },
+          shading: isHeader ? {
+            fill: 'F0F0F0'  // 表头背景色
+          } : undefined
+        }))
+      })
+
+      if (cells.length > 0) {
+        rows.push(new TableRow({
+          children: cells,
+          height: {
+            value: 400,
+            rule: 'atLeast'
+          }
+        }))
+      }
+    })
+
+    return new Table({
+      rows,
+      width: {
+        size: 100,
+        type: WidthType.PERCENTAGE,
+      },
+      borders: {
+        top: { style: 'single', size: 1, color: '000000' },
+        bottom: { style: 'single', size: 1, color: '000000' },
+        left: { style: 'single', size: 1, color: '000000' },
+        right: { style: 'single', size: 1, color: '000000' },
+        insideHorizontal: { style: 'single', size: 1, color: '000000' },
+        insideVertical: { style: 'single', size: 1, color: '000000' },
+      },
+      margins: {
+        top: 200,
+        bottom: 200,
+      }
+    })
+  } catch (error) {
+    console.error('转换HTML表格失败:', error)
+    return new Table({
+      rows: [new TableRow({
+        children: [new TableCell({
+          children: [new Paragraph({
+            children: [new TextRun('表格转换失败')]
+          })]
+        })]
+      })],
+    })
+  }
+}
+
+// 生成本地时间戳
+const getLocalTimestamp = (): string => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  const seconds = String(now.getSeconds()).padStart(2, '0')
+
+  return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`
+}
+
+// 防重复的成功提示
+const showSuccessMessage = (message: string) => {
+  const now = Date.now()
+  // 如果是相同消息且在1秒内，则忽略
+  if (lastSuccessMessage.value === message && now - lastSuccessTime.value < 1000) {
+    return
+  }
+
+  lastSuccessMessage.value = message
+  lastSuccessTime.value = now
+
+  window.dispatchEvent(new CustomEvent('show-success', {
+    detail: message
+  }))
+}
+
+// 关闭导出对话框
+const closeExportDialog = () => {
+  showExportDialog.value = false
+  isExportingAIResults.value = false
+  // 保存用户选择的导出格式
+  localStorage.setItem('exportFormat', exportFormat.value)
 }
 
 const getFormatDisplayName = (format: string) => {
@@ -691,43 +1428,93 @@ const generateDocxContent = async (): Promise<string> => {
       throw new Error('没有可导出的内容')
     }
 
-    // 获取所有已处理的页面
-    const processedPages = currentDocument.value.pages.filter((page: any) => page.processed)
+    // 获取所有已处理的页面，按页码排序
+    const processedPages = currentDocument.value.pages
+      .filter((page: any) => page.processed)
+      .sort((a: any, b: any) => a.number - b.number)
 
     if (processedPages.length === 0) {
       throw new Error('没有已处理的页面可以导出')
     }
 
-    // 合并所有页面的文本，使用分页符分隔
-    let allText = ''
+    // 按页面生成内容，每页一个section
+    const sections: any[] = []
     for (let i = 0; i < processedPages.length; i++) {
       const page = processedPages[i]
-      // 优先使用 OCR 结果，其次是 AI 结果，最后是原生文本
-      const text = page.ocr_text || page.ai_text || page.text || ''
-      if (text) {
-        if (i > 0) {
-          allText += '\n\n[PAGE_BREAK]\n\n' // 分页符标记
+      // 根据导出类型选择文本
+      let text = ''
+      if (isExportingAIResults.value) {
+        // AI导出：DOCX格式使用HTML转换，保持格式
+        const aiContent = convertHtmlToDocxContent(page.ai_text || '')
+        sections.push({
+          properties: {
+            page: {
+              size: {
+                orientation: 'portrait',
+              },
+              pageNumbers: {
+                start: 1,
+                formatType: 'decimal',
+              },
+            },
+          },
+          children: aiContent,
+        })
+        continue // 跳过后面的普通处理逻辑
+      } else {
+        // 普通导出：根据用户选择的文本类型
+        if (exportTextType.value === 'ocr') {
+          // 只导出OCR文本
+          text = page.ocr_text || ''
+        } else if (exportTextType.value === 'ai') {
+          // 只导出AI文本，DOCX格式需要特殊处理
+          const aiContent = convertHtmlToDocxContent(page.ai_text || '')
+          sections.push({
+            properties: {
+              page: {
+                size: {
+                  orientation: 'portrait',
+                },
+                pageNumbers: {
+                  start: 1,
+                  formatType: 'decimal',
+                },
+              },
+            },
+            children: aiContent,
+          })
+          continue // 跳过后面的普通处理逻辑
+        } else {
+          // 智能选择：优先OCR，其次AI，最后原生
+          text = page.ocr_text || page.ai_text || page.text || ''
         }
-        allText += text
+      }
+
+      if (text) {
+        // 检测当前页面是否包含表格
+        const hasTable = detectTable(text)
+
+        sections.push({
+          properties: {
+            page: {
+              size: {
+                orientation: 'portrait',
+              },
+              pageNumbers: {
+                start: 1,
+                formatType: 'decimal',
+              },
+            },
+          },
+          children: [
+            ...(hasTable ? generateTableContent(text) : generateTextContent(text))
+          ],
+        })
       }
     }
 
-    // 检测文本中是否包含表格
-    const hasTable = detectTable(allText)
-
     const doc = new Document({
-      sections: [{
-        properties: {
-          page: {
-            size: {
-              orientation: 'portrait',
-            },
-          },
-        },
-        children: [
-          ...(hasTable ? generateTableContent(allText) : generateTextContent(allText))
-        ],
-      }],
+      sections: sections,
     })
 
     // 生成文档
@@ -929,6 +1716,10 @@ const createTableFromLines = (lines: string[]): Table => {
   }
 }
 
+
+
+
+
 // 生成普通文本内容
 const generateTextContent = (text: string) => {
   try {
@@ -1034,12 +1825,14 @@ const generateTextContent = (text: string) => {
           :document="currentDocument"
           :selectedPages="selectedPages"
           :supportedFormats="supportedFormats"
+          :processing="processing"
           @file-select="handleFileSelect"
           @page-select="handlePageSelect"
           @edit-page="handleEditPage"
           @process-pages="(pageNumbers, forceReprocess) => handleProcessPages(pageNumbers, forceReprocess)"
           @page-rendered="handlePageRendered"
           @ai-processing-complete="handleAIProcessingComplete"
+          @start-batch-ai-processing="handleStartBatchAIProcessing"
         />
       </div>
     </main>
@@ -1080,6 +1873,8 @@ const generateTextContent = (text: string) => {
             :originalText="currentDocument?.pages?.find((p: any) => p.number === editingPageNumber)?.text"
             :ocrText="currentDocument?.pages?.find((p: any) => p.number === editingPageNumber)?.ocr_text"
             :aiText="currentDocument?.pages?.find((p: any) => p.number === editingPageNumber)?.ai_text"
+            :documentName="getDocumentName()"
+            :initialTab="editingTabType"
             @text-updated="handleTextUpdated"
             @close="closeTextEditor"
           />
@@ -1091,13 +1886,44 @@ const generateTextContent = (text: string) => {
     <div v-if="showExportDialog" class="export-dialog-overlay">
       <div class="export-dialog">
         <div class="dialog-header">
-          <h3>导出处理结果</h3>
-          <button @click="showExportDialog = false" class="close-btn">&times;</button>
+          <h3>{{ isExportingAIResults ? '导出AI处理结果' : '导出处理结果' }}</h3>
+          <button @click="closeExportDialog" class="close-btn">&times;</button>
         </div>
 
         <div class="dialog-content">
+          <!-- 文本类型选择 -->
+          <div class="text-type-selection" v-if="!isExportingAIResults">
+            <label>文本类型：</label>
+            <div class="text-type-options">
+              <label class="text-type-option">
+                <input type="radio" v-model="exportTextType" value="auto" />
+                <span class="option-label">🎯 智能选择</span>
+              </label>
+              <label class="text-type-option">
+                <input type="radio" v-model="exportTextType" value="ocr" />
+                <span class="option-label">🔍 OCR文本</span>
+              </label>
+              <label class="text-type-option">
+                <input type="radio" v-model="exportTextType" value="ai" />
+                <span class="option-label">🤖 AI文本</span>
+              </label>
+            </div>
+            <div class="text-type-description">
+              <p v-if="exportTextType === 'auto'" class="type-desc">
+                <strong>智能选择：</strong>优先导出OCR识别文本，其次AI处理文本，最后原生文本
+              </p>
+              <p v-else-if="exportTextType === 'ocr'" class="type-desc">
+                <strong>OCR文本：</strong>只导出OCR识别的文本内容，适合需要原始识别结果的场景
+              </p>
+              <p v-else-if="exportTextType === 'ai'" class="type-desc">
+                <strong>AI文本：</strong>只导出AI处理的文本内容，包含格式化、纠错等优化结果
+              </p>
+            </div>
+          </div>
+
+          <!-- 导出格式选择 -->
           <div class="format-selection">
-            <label>选择导出格式：</label>
+            <label>导出格式：</label>
             <div class="format-options">
               <label class="format-option">
                 <input type="radio" v-model="exportFormat" value="txt" />
@@ -1138,17 +1964,26 @@ const generateTextContent = (text: string) => {
 
           <div class="export-info">
             <p v-if="hasProcessedPages">
-              <strong>已处理页面数：</strong>
-              {{ currentDocument?.pages?.filter((p: any) => p.processed).length || 0 }} 页
+              <strong>可导出页面数：</strong>
+              {{ getExportablePageCount() }} 页
+            </p>
+            <p v-if="getExportablePageCount() === 0 && !isExportingAIResults" class="no-content-warning">
+              <span class="warning-icon">⚠️</span>
+              当前选择的文本类型没有可导出的内容
             </p>
           </div>
         </div>
 
         <div class="dialog-actions">
-          <button @click="showExportDialog = false" class="btn btn-secondary">
+          <button @click="closeExportDialog" class="btn btn-secondary">
             取消
           </button>
-          <button @click="handleExport" class="btn btn-primary">
+          <button
+            @click="handleExport"
+            class="btn btn-primary"
+            :disabled="getExportablePageCount() === 0"
+            :title="getExportablePageCount() === 0 ? '没有可导出的内容' : ''"
+          >
             导出
           </button>
         </div>
@@ -1224,6 +2059,83 @@ const generateTextContent = (text: string) => {
             ⚡ 使用缓存
           </button>
           <button @click="confirmProcessForce" class="btn btn-reprocess">
+            🔄 重新处理
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI处理确认弹窗 -->
+    <div v-if="showAIConfirmDialog" class="ai-confirm-popup-overlay">
+      <div class="ai-confirm-popup" @click.stop>
+        <div class="dialog-header">
+          <h3>🤖 检测到已处理页面</h3>
+        </div>
+
+        <div class="dialog-content">
+          <div v-if="aiConfirmData" class="confirm-info">
+            <!-- 全部已处理的情况 -->
+            <div v-if="aiConfirmData.processedPages.length === aiConfirmData.totalPages" class="all-processed">
+              <div class="status-icon">✨</div>
+              <p class="main-message">
+                您选择的 <strong>{{ aiConfirmData.totalPages }}</strong> 页全部已有AI处理结果
+              </p>
+              <p class="sub-message">
+                您可以在历史记录中查看处理结果，或选择重新处理以获得最新结果
+              </p>
+            </div>
+
+            <!-- 部分已处理的情况 -->
+            <div v-else class="partial-processed">
+              <div class="status-icon">⚠️</div>
+              <p class="main-message">
+                您选择的 <strong>{{ aiConfirmData.totalPages }}</strong> 页中，
+                有 <strong class="processed-count">{{ aiConfirmData.processedPages.length }}</strong> 页已有AI处理结果
+              </p>
+
+              <div class="page-summary">
+                <div class="summary-item processed">
+                  <span class="count">{{ aiConfirmData.processedPages.length }}</span>
+                  <span class="label">已处理</span>
+                  <span class="pages-preview">{{ formatPageList(aiConfirmData.processedPages) }}</span>
+                </div>
+                <div class="summary-item unprocessed">
+                  <span class="count">{{ aiConfirmData.unprocessedPages?.length || 0 }}</span>
+                  <span class="label">未处理</span>
+                  <span class="pages-preview">{{ formatPageList(aiConfirmData.unprocessedPages) }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="options-explanation">
+              <div class="option-item cache">
+                <div class="option-icon">⚡</div>
+                <div class="option-content">
+                  <strong>导出结果</strong>
+                  <span v-if="aiConfirmData.processedPages.length === aiConfirmData.totalPages">所有页面都已处理，可直接导出AI处理结果</span>
+                  <span v-else>只处理未处理的页面，已处理页面使用缓存结果（推荐）</span>
+                </div>
+              </div>
+              <div class="option-item reprocess">
+                <div class="option-icon">🔄</div>
+                <div class="option-content">
+                  <strong>重新处理</strong>
+                  <span>重新AI处理所有页面，获得最新结果（耗时较长）</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-actions">
+          <button @click="cancelAIProcess" class="btn btn-cancel">
+            取消
+          </button>
+          <button @click="confirmAIProcessWithCache" class="btn btn-cache">
+            <span v-if="aiConfirmData && aiConfirmData.processedPages.length === aiConfirmData.totalPages">📤 导出结果</span>
+            <span v-else>⚡ 使用缓存</span>
+          </button>
+          <button @click="confirmAIProcessForce" class="btn btn-reprocess">
             🔄 重新处理
           </button>
         </div>
@@ -1553,6 +2465,21 @@ const generateTextContent = (text: string) => {
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
+/* 按钮禁用状态 */
+.btn:disabled {
+  background: #ccc !important;
+  color: #666 !important;
+  border-color: #ccc !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
+  opacity: 0.6;
+}
+
+.btn:disabled::before {
+  display: none;
+}
+
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
@@ -1743,6 +2670,102 @@ const generateTextContent = (text: string) => {
   background: #999;
 }
 
+/* 文本类型选择样式 */
+.text-type-selection {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.text-type-selection > label {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+  color: #333;
+  font-size: 1rem;
+}
+
+.text-type-options {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.text-type-option {
+  display: flex;
+  align-items: center;
+  padding: 0.6rem 0.8rem;
+  background: rgba(255, 255, 255, 0.8);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+}
+
+.text-type-option:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(102, 126, 234, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.1);
+}
+
+.text-type-option input[type="radio"] {
+  margin-right: 0.4rem;
+  transform: scale(1.1);
+}
+
+.text-type-option .option-label {
+  font-weight: 500;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.text-type-option input[type="radio"]:checked + .option-label {
+  color: #667eea;
+  font-weight: 600;
+}
+
+.text-type-option:has(input[type="radio"]:checked) {
+  background: rgba(102, 126, 234, 0.1);
+  border-color: #667eea;
+  box-shadow: 0 3px 12px rgba(102, 126, 234, 0.2);
+}
+
+.text-type-description {
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  padding: 0.75rem;
+  border-left: 3px solid #667eea;
+}
+
+.text-type-description .type-desc {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: #555;
+}
+
+.text-type-description .type-desc strong {
+  color: #667eea;
+  font-weight: 600;
+}
+
+/* 响应式调整 */
+@media (max-width: 600px) {
+  .text-type-options {
+    flex-direction: column;
+  }
+
+  .text-type-option {
+    justify-content: flex-start;
+  }
+}
+
 .format-selection label {
   display: block;
   margin-bottom: 1rem;
@@ -1802,14 +2825,35 @@ const generateTextContent = (text: string) => {
 
 .export-info {
   background: #f8f9fa;
-  padding: 1rem;
+  padding: 0.75rem;
   border-radius: 4px;
   border-left: 4px solid #007bff;
+  margin-bottom: 1rem;
 }
 
 .export-info p {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 0.25rem 0;
   color: #666;
+  font-size: 0.9rem;
+}
+
+.export-info .no-content-warning {
+  color: #e74c3c;
+  font-weight: 500;
+  margin: 0.25rem 0 0 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.export-info .warning-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
 }
 
 .export-info p:last-child {
@@ -3080,5 +4124,97 @@ const generateTextContent = (text: string) => {
   font-size: 0.7rem;
   color: #999;
   user-select: none;
+}
+
+/* AI确认弹窗样式 */
+.ai-confirm-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000; /* 比批量处理弹窗更高 */
+  animation: fadeIn 0.3s ease;
+}
+
+.ai-confirm-popup {
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(15px);
+  border-radius: 16px;
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.25), 0 10px 30px rgba(0, 0, 0, 0.15);
+  width: 90%;
+  max-width: 480px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  animation: slideIn 0.3s ease;
+}
+
+.ai-confirm-popup .dialog-header {
+  background: linear-gradient(135deg, rgba(23, 162, 184, 0.1) 0%, rgba(0, 123, 255, 0.1) 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.ai-confirm-popup .dialog-header h3 {
+  color: #1a73e8;
+  font-weight: 600;
+}
+
+.ai-confirm-popup .dialog-content {
+  padding: 1.5rem;
+}
+
+.ai-confirm-popup .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  background: rgba(248, 249, 250, 0.8);
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.ai-confirm-popup .btn {
+  padding: 0.6rem 1.2rem;
+  font-size: 0.9rem;
+  border-radius: 8px;
+  font-weight: 500;
+  min-width: 90px;
+}
+
+.ai-confirm-popup .btn-cancel {
+  background: rgba(108, 117, 125, 0.1);
+  color: #6c757d;
+  border: 1px solid rgba(108, 117, 125, 0.2);
+}
+
+.ai-confirm-popup .btn-cancel:hover {
+  background: rgba(108, 117, 125, 0.2);
+  transform: translateY(-1px);
+}
+
+.ai-confirm-popup .btn-cache {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.ai-confirm-popup .btn-cache:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(40, 167, 69, 0.3);
+}
+
+.ai-confirm-popup .btn-reprocess {
+  background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%);
+  color: #212529;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.ai-confirm-popup .btn-reprocess:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(253, 126, 20, 0.3);
 }
 </style>

@@ -272,6 +272,73 @@ func (a *App) ProcessPages(pageNumbers []int) {
 	go a.processPagesBatch(pageNumbers, false)
 }
 
+// ProcessSinglePage 处理单个页面（非批量）
+func (a *App) ProcessSinglePage(pageNumber int) {
+	go a.processSinglePageWithHistory(pageNumber, false)
+}
+
+// ProcessSinglePageForce 强制处理单个页面（非批量）
+func (a *App) ProcessSinglePageForce(pageNumber int) {
+	go a.processSinglePageWithHistory(pageNumber, true)
+}
+
+// processSinglePageWithHistory 处理单个页面并创建历史记录
+func (a *App) processSinglePageWithHistory(pageNumber int, forceReprocess bool) {
+	a.mu.RLock()
+	doc := a.currentDoc
+	a.mu.RUnlock()
+
+	if doc == nil {
+		runtime.EventsEmit(a.ctx, "processing-error", "未加载PDF文档")
+		return
+	}
+
+	if a.ocrClient == nil {
+		runtime.EventsEmit(a.ctx, "processing-error", "未配置AI服务")
+		return
+	}
+
+	// 获取实际使用的OCR模型名称
+	aiConfig := a.configManager.GetAIConfig()
+	actualOCRModel := aiConfig.OCRModel
+	if actualOCRModel == "" {
+		actualOCRModel = aiConfig.Model
+	}
+
+	// 创建历史记录，使用实际的OCR模型名称（OCR任务不添加前缀）
+	historyRecord, err := a.historyManager.CreateRecord(doc.FilePath, 1, actualOCRModel)
+	if err != nil {
+		log.Printf("创建单页OCR历史记录失败: %v", err)
+	}
+
+	// 创建上下文
+	ctx := context.Background()
+
+	// 处理页面
+	err = a.processSinglePage(ctx, pageNumber, historyRecord)
+	if err != nil {
+		log.Printf("单页OCR处理失败: %v", err)
+		if historyRecord != nil {
+			a.historyManager.UpdateRecordStatus(historyRecord.ID, history.StatusFailed, err.Error())
+		}
+		runtime.EventsEmit(a.ctx, "processing-error", fmt.Sprintf("处理第%d页失败: %v", pageNumber, err))
+		return
+	}
+
+	// 更新历史记录状态
+	if historyRecord != nil {
+		a.historyManager.UpdateRecordStatus(historyRecord.ID, history.StatusCompleted, "")
+	}
+
+	// 发送单页完成事件
+	runtime.EventsEmit(a.ctx, "page-processed", map[string]interface{}{
+		"pageNumber": pageNumber,
+		"status":     "处理完成",
+	})
+
+	log.Printf("单页OCR处理完成: 页面%d", pageNumber)
+}
+
 // ProcessPagesForce 强制重新处理指定页面（跳过缓存）
 func (a *App) ProcessPagesForce(pageNumbers []int) {
 	go a.processPagesBatch(pageNumbers, true)
@@ -551,7 +618,7 @@ func (a *App) processPagesBatch(pageNumbers []int, forceReprocess bool) {
 		actualOCRModel = aiConfig.Model
 	}
 
-	// 创建历史记录，使用实际的OCR模型名称
+	// 创建历史记录，使用实际的OCR模型名称（OCR任务不添加前缀）
 	historyRecord, err := a.historyManager.CreateRecord(doc.FilePath, len(pageNumbers), actualOCRModel)
 	if err != nil {
 		log.Printf("创建历史记录失败: %v", err)
@@ -588,6 +655,7 @@ func (a *App) processPagesBatch(pageNumbers []int, forceReprocess bool) {
 	runtime.EventsEmit(a.ctx, "processing-complete", map[string]interface{}{
 		"total_processed": processed,
 		"document":        doc,
+		"processedPages":  pageNumbers, // 添加处理过的页面信息
 	})
 }
 
@@ -767,6 +835,19 @@ func (a *App) processWithAI(pageNumbers []int, prompt string) {
 		return
 	}
 
+	// 获取实际使用的AI模型名称
+	aiConfig := a.configManager.GetAIConfig()
+	actualAIModel := aiConfig.Model
+	if actualAIModel == "" {
+		actualAIModel = "未知模型"
+	}
+
+	// 创建历史记录，使用实际的AI模型名称，添加AI前缀标识任务类型
+	historyRecord, err := a.historyManager.CreateRecord(doc.FilePath, len(pageNumbers), "AI-"+actualAIModel)
+	if err != nil {
+		log.Printf("创建AI处理历史记录失败: %v", err)
+	}
+
 	// 收集文本
 	var textBuilder strings.Builder
 	for _, pageNum := range pageNumbers {
@@ -809,6 +890,28 @@ func (a *App) processWithAI(pageNumbers []int, prompt string) {
 		if err := a.savePageToCache(pageNum, page.OCRText, result); err != nil {
 			log.Printf("保存AI处理结果到缓存失败: %v", err)
 		}
+
+		// 保存到历史记录
+		if historyRecord != nil {
+			historyPage := &history.HistoryPage{
+				HistoryID:       historyRecord.ID,
+				PageNumber:      pageNum,
+				OriginalText:    page.Text,
+				OCRText:         page.OCRText,
+				AIProcessedText: result,
+				ProcessingTime:  0, // 非批量处理暂时设为0
+			}
+			if err := a.historyManager.AddPage(historyPage); err != nil {
+				log.Printf("保存AI处理历史记录失败: %v", err)
+			} else {
+				log.Printf("AI处理历史记录保存成功: 页面%d", pageNum)
+			}
+		}
+	}
+
+	// 更新历史记录状态
+	if historyRecord != nil {
+		a.historyManager.UpdateRecordStatus(historyRecord.ID, history.StatusCompleted, "")
 	}
 
 	// 发送结果
@@ -817,6 +920,289 @@ func (a *App) processWithAI(pageNumbers []int, prompt string) {
 		"prompt": prompt,
 		"result": result,
 	})
+}
+
+// CheckAIProcessedPages 检查页面AI处理状态
+func (a *App) CheckAIProcessedPages(pageNumbers []int) map[string]interface{} {
+	a.mu.RLock()
+	doc := a.currentDoc
+	a.mu.RUnlock()
+
+	result := map[string]interface{}{
+		"total_pages":       len(pageNumbers),
+		"processed_pages":   []int{},
+		"unprocessed_pages": []int{},
+		"processed_count":   0,
+	}
+
+	if doc == nil {
+		return result
+	}
+
+	processedPages := []int{}
+	unprocessedPages := []int{}
+
+	for _, pageNum := range pageNumbers {
+		if pageNum < 1 || pageNum > len(doc.Pages) {
+			continue
+		}
+
+		page := doc.Pages[pageNum-1]
+		if page.AIText != "" {
+			processedPages = append(processedPages, pageNum)
+		} else {
+			unprocessedPages = append(unprocessedPages, pageNum)
+		}
+	}
+
+	result["processed_pages"] = processedPages
+	result["unprocessed_pages"] = unprocessedPages
+	result["processed_count"] = len(processedPages)
+
+	return result
+}
+
+// ProcessWithAIBatch 批量AI处理（每页单独处理）
+func (a *App) ProcessWithAIBatch(pageNumbers []int, prompt string) {
+	go a.processWithAIBatch(pageNumbers, prompt, false)
+}
+
+// ProcessWithAIBatchForce 强制批量AI处理（忽略缓存）
+func (a *App) ProcessWithAIBatchForce(pageNumbers []int, prompt string) {
+	go a.processWithAIBatch(pageNumbers, prompt, true)
+}
+
+// processWithAIBatch 批量AI处理实现
+func (a *App) processWithAIBatch(pageNumbers []int, prompt string, forceReprocess bool) {
+	a.mu.RLock()
+	doc := a.currentDoc
+	a.mu.RUnlock()
+
+	if doc == nil {
+		runtime.EventsEmit(a.ctx, "processing-error", "未加载PDF文档")
+		return
+	}
+
+	if a.ocrClient == nil {
+		runtime.EventsEmit(a.ctx, "processing-error", "未配置AI服务")
+		return
+	}
+
+	// 过滤有效页面
+	validPages := []int{}
+	for _, pageNum := range pageNumbers {
+		if pageNum >= 1 && pageNum <= len(doc.Pages) {
+			page := doc.Pages[pageNum-1]
+			if page.OCRText != "" || page.Text != "" {
+				validPages = append(validPages, pageNum)
+			}
+		}
+	}
+
+	if len(validPages) == 0 {
+		runtime.EventsEmit(a.ctx, "processing-error", "没有可处理的页面")
+		return
+	}
+
+	// 获取实际使用的AI模型名称
+	aiConfig := a.configManager.GetAIConfig()
+	actualAIModel := aiConfig.Model
+	if actualAIModel == "" {
+		actualAIModel = "未知模型"
+	}
+
+	// 创建历史记录，使用实际的AI模型名称，添加AI前缀标识任务类型
+	historyRecord, err := a.historyManager.CreateRecord(doc.FilePath, len(validPages), "AI-"+actualAIModel)
+	if err != nil {
+		log.Printf("创建AI处理历史记录失败: %v", err)
+	}
+
+	// 创建上下文用于取消
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 设置处理状态
+	a.processingMu.Lock()
+	a.processingState = 1 // processing
+	a.processedInBatch = 0
+	a.processingMu.Unlock()
+
+	// 并发处理AI任务
+	const maxConcurrency = 2 // AI处理并发数较低，避免API限制
+	pagesChan := make(chan int, len(validPages))
+	resultsChan := make(chan AIProcessResult, len(validPages))
+
+	// 发送页面到通道
+	for _, pageNum := range validPages {
+		pagesChan <- pageNum
+	}
+	close(pagesChan)
+
+	// 启动工作协程
+	var wg sync.WaitGroup
+	for i := 0; i < maxConcurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for pageNum := range pagesChan {
+				// 检查取消状态
+				select {
+				case <-ctx.Done():
+					log.Printf("AI处理协程检测到取消信号，停止处理")
+					return
+				default:
+				}
+
+				result := a.processPageAI(ctx, pageNum, prompt, doc, forceReprocess, historyRecord)
+
+				select {
+				case <-ctx.Done():
+					return
+				case resultsChan <- result:
+				}
+			}
+		}()
+	}
+
+	// 等待所有工作完成
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// 收集结果并发送进度更新
+	processed := 0
+	total := len(validPages)
+	successCount := 0
+
+	for result := range resultsChan {
+		processed++
+
+		if result.Error != nil {
+			log.Printf("AI处理第%d页失败: %v", result.PageNumber, result.Error)
+			// 检查是否是取消导致的错误
+			if result.Error == context.Canceled || strings.Contains(result.Error.Error(), "context canceled") {
+				log.Printf("页面 %d AI处理被取消", result.PageNumber)
+			} else {
+				runtime.EventsEmit(a.ctx, "processing-error", fmt.Sprintf("AI处理第%d页失败: %v", result.PageNumber, result.Error))
+			}
+		} else {
+			successCount++
+			// AI页面处理成功，立即发送单页完成事件以触发实时刷新
+			runtime.EventsEmit(a.ctx, "ai-page-processed", map[string]interface{}{
+				"pageNumber": result.PageNumber,
+				"status":     result.Status,
+				"result":     result.Result,
+			})
+		}
+
+		runtime.EventsEmit(a.ctx, "processing-progress", ProgressUpdate{
+			Total:       total,
+			Processed:   processed,
+			CurrentPage: result.PageNumber,
+			Status:      result.Status,
+		})
+	}
+
+	// 重置处理状态
+	a.processingMu.Lock()
+	a.processingState = 0 // idle
+	a.processingMu.Unlock()
+
+	// 更新历史记录状态
+	if historyRecord != nil {
+		if successCount > 0 {
+			a.historyManager.UpdateRecordStatus(historyRecord.ID, history.StatusCompleted, "")
+		} else {
+			a.historyManager.UpdateRecordStatus(historyRecord.ID, history.StatusFailed, "所有页面处理失败")
+		}
+	}
+
+	// 发送完成事件
+	if successCount > 0 {
+		runtime.EventsEmit(a.ctx, "ai-processing-complete", map[string]interface{}{
+			"pages":        validPages,
+			"prompt":       prompt,
+			"successCount": successCount,
+			"totalCount":   total,
+		})
+	}
+}
+
+// processPageAI 处理单个页面的AI任务
+func (a *App) processPageAI(ctx context.Context, pageNum int, prompt string, doc *pdf.PDFDocument, forceReprocess bool, historyRecord *history.HistoryRecord) AIProcessResult {
+	startTime := time.Now()
+	result := AIProcessResult{
+		PageNumber: pageNum,
+		Status:     fmt.Sprintf("正在AI处理第%d页", pageNum),
+	}
+
+	// 检查页面范围
+	if pageNum < 1 || pageNum > len(doc.Pages) {
+		result.Error = fmt.Errorf("页码超出范围")
+		return result
+	}
+
+	page := doc.Pages[pageNum-1]
+
+	// 获取文本内容
+	text := page.OCRText
+	if text == "" {
+		text = page.Text
+	}
+
+	if text == "" {
+		result.Error = fmt.Errorf("页面没有可处理的文本")
+		return result
+	}
+
+	// 检查缓存（只有在强制重新处理时才跳过缓存）
+	if !forceReprocess && page.AIText != "" {
+		log.Printf("第%d页AI处理结果已存在，使用缓存", pageNum)
+		result.Result = page.AIText
+		result.Status = fmt.Sprintf("第%d页AI处理完成（缓存）", pageNum)
+		return result
+	}
+
+	log.Printf("开始AI处理第%d页", pageNum)
+
+	// 使用AI处理
+	aiResult, err := a.ocrClient.ProcessWithAI(ctx, text, prompt)
+	if err != nil {
+		result.Error = fmt.Errorf("AI处理失败: %w", err)
+		return result
+	}
+
+	// 更新页面AI处理结果
+	a.pdfProcessor.UpdatePageAI(doc, pageNum, aiResult)
+
+	// 保存到缓存
+	if err := a.savePageToCache(pageNum, page.OCRText, aiResult); err != nil {
+		log.Printf("保存AI处理结果到缓存失败: %v", err)
+	}
+
+	// 保存到历史记录
+	if historyRecord != nil {
+		historyPage := &history.HistoryPage{
+			HistoryID:       historyRecord.ID,
+			PageNumber:      pageNum,
+			OriginalText:    page.Text,
+			OCRText:         page.OCRText,
+			AIProcessedText: aiResult,
+			ProcessingTime:  time.Since(startTime).Seconds(),
+		}
+		if err := a.historyManager.AddPage(historyPage); err != nil {
+			log.Printf("保存AI处理历史记录失败: %v", err)
+		} else {
+			log.Printf("AI处理历史记录保存成功: 页面%d", pageNum)
+		}
+	}
+
+	result.Result = aiResult
+	result.Status = fmt.Sprintf("第%d页AI处理完成", pageNum)
+
+	log.Printf("第%d页AI处理完成", pageNum)
+	return result
 }
 
 // ExportText 导出文本
@@ -1206,6 +1592,12 @@ func (a *App) processPagesConcurrently(ctx context.Context, pageNumbers []int, h
 				// 只有真正的错误才发送 processing-error 事件
 				runtime.EventsEmit(a.ctx, "processing-error", fmt.Sprintf("处理第%d页失败: %v", result.PageNumber, result.Error))
 			}
+		} else {
+			// 页面处理成功，立即发送单页完成事件以触发实时刷新
+			runtime.EventsEmit(a.ctx, "page-processed", map[string]interface{}{
+				"pageNumber": result.PageNumber,
+				"status":     result.Status,
+			})
 		}
 
 		runtime.EventsEmit(a.ctx, "processing-progress", ProgressUpdate{
@@ -1223,6 +1615,14 @@ func (a *App) processPagesConcurrently(ctx context.Context, pageNumbers []int, h
 type ProcessResult struct {
 	PageNumber int
 	Status     string
+	Error      error
+}
+
+// AIProcessResult AI处理结果
+type AIProcessResult struct {
+	PageNumber int
+	Status     string
+	Result     string
 	Error      error
 }
 

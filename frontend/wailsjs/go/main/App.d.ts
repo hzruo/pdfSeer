@@ -10,6 +10,8 @@ import {frontend} from '../models';
 
 export function CancelProcessing():Promise<void>;
 
+export function CheckAIProcessedPages(arg1:Array<number>):Promise<Record<string, any>>;
+
 export function CheckProcessedPages(arg1:Array<number>):Promise<Record<string, any>>;
 
 export function CheckSystemDependencies():Promise<system.SystemInfo>;
@@ -62,7 +64,15 @@ export function ProcessPages(arg1:Array<number>):Promise<void>;
 
 export function ProcessPagesForce(arg1:Array<number>):Promise<void>;
 
+export function ProcessSinglePage(arg1:number):Promise<void>;
+
+export function ProcessSinglePageForce(arg1:number):Promise<void>;
+
 export function ProcessWithAI(arg1:Array<number>,arg2:string):Promise<void>;
+
+export function ProcessWithAIBatch(arg1:Array<number>,arg2:string):Promise<void>;
+
+export function ProcessWithAIBatchForce(arg1:Array<number>,arg2:string):Promise<void>;
 
 export function ResumeProcessing():Promise<void>;
 

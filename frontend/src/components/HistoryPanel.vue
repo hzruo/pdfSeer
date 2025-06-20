@@ -21,8 +21,9 @@ const currentPageIndex = ref(0) // 当前页面索引
 const pagesPerView = ref(5) // 每次显示的页面数
 const showExportDialog = ref(false)
 const exportFormat = ref('txt')
+const exportTextType = ref('auto') // auto, ocr, ai
 const listViewMode = ref<'grouped' | 'detailed'>('grouped') // 列表视图模式
-const exportMode = ref<'single' | 'document'>('single') // 导出模式：单个记录或整个文档
+const exportMode = ref<'single' | 'document'>('single') // 导出模式：单个记录或所有历史
 const showDeleteDialog = ref(false)
 const recordToDelete = ref<any>(null)
 
@@ -136,11 +137,228 @@ const loadLastExportFormat = () => {
   if (saved && ['txt', 'markdown', 'html', 'rtf', 'docx'].includes(saved)) {
     exportFormat.value = saved
   }
+
+  const savedTextType = localStorage.getItem('historyPanel_exportTextType')
+  if (savedTextType && ['auto', 'ocr', 'ai'].includes(savedTextType)) {
+    exportTextType.value = savedTextType
+  }
 }
 
 // 保存导出格式到localStorage
 const saveExportFormat = (format: string) => {
   localStorage.setItem('historyPanel_exportFormat', format)
+}
+
+// 保存文本类型到localStorage
+const saveExportTextType = (textType: string) => {
+  localStorage.setItem('historyPanel_exportTextType', textType)
+}
+
+// 获取文档总页数（注意：page_count可能是处理的页数，不是文档总页数）
+const getDocumentTotalPages = () => {
+  if (!selectedRecord.value) return 0
+
+  try {
+    // 从历史记录中获取该文档的所有页面，统计最大页码
+    const documentRecords = historyRecords.value.filter(
+      (record: any) => record.document_path === selectedRecord.value.document_path
+    )
+
+    const allPageNumbers = new Set<number>()
+
+    // 收集所有历史记录中的页面号
+    documentRecords.forEach((record: any) => {
+      if (record.pages && Array.isArray(record.pages)) {
+        record.pages.forEach((page: any) => {
+          if (page.page_number && typeof page.page_number === 'number') {
+            allPageNumbers.add(page.page_number)
+          }
+        })
+      }
+    })
+
+    // 包含当前选中的页面
+    if (selectedPages.value && selectedPages.value.length > 0) {
+      selectedPages.value.forEach((page: any) => {
+        if (page.page_number && typeof page.page_number === 'number') {
+          allPageNumbers.add(page.page_number)
+        }
+      })
+    }
+
+    // 如果有页面号，返回最大页码；否则尝试使用记录中的page_count
+    let totalPages = 0
+    if (allPageNumbers.size > 0) {
+      totalPages = Math.max(...Array.from(allPageNumbers))
+    } else if (selectedRecord.value.page_count && typeof selectedRecord.value.page_count === 'number') {
+      totalPages = selectedRecord.value.page_count
+    }
+
+
+
+    return totalPages
+  } catch (error) {
+    console.error('计算文档总页数失败:', error)
+    return selectedRecord.value?.page_count || selectedPages.value.length || 0
+  }
+}
+
+// 获取文档可导出页数（根据文本类型）
+const getDocumentExportablePages = () => {
+  if (!selectedRecord.value) return 0
+
+  try {
+    // 从历史记录中获取该文档的所有页面
+    const documentRecords = historyRecords.value.filter(
+      (record: any) => record.document_path === selectedRecord.value.document_path
+    )
+
+
+
+    // 收集所有页面，按页码去重（使用最新的版本）
+    const pageMap = new Map()
+    documentRecords.forEach((record: any) => {
+      if (record.pages && Array.isArray(record.pages)) {
+        record.pages.forEach((page: any) => {
+          if (page.page_number && typeof page.page_number === 'number') {
+            const existing = pageMap.get(page.page_number)
+            if (!existing || new Date(page.created_at || 0) > new Date(existing.created_at || 0)) {
+              pageMap.set(page.page_number, page)
+            }
+          }
+        })
+      }
+    })
+
+    // 总是包含当前选中的页面（确保不会遗漏）
+    if (selectedPages.value && selectedPages.value.length > 0) {
+      selectedPages.value.forEach((page: any) => {
+        if (page.page_number && typeof page.page_number === 'number') {
+          const existing = pageMap.get(page.page_number)
+          // 如果没有现有页面，或者当前页面更新，则使用当前页面
+          if (!existing || new Date(page.created_at || 0) >= new Date(existing.created_at || 0)) {
+            pageMap.set(page.page_number, page)
+          }
+        }
+      })
+    }
+
+    const allPages = Array.from(pageMap.values())
+
+
+    // 根据文本类型筛选可导出的页面
+    const exportablePages = allPages.filter((page: any) => {
+
+
+      if (exportTextType.value === 'ocr') {
+        return page.ocr_text && page.ocr_text.trim().length > 0
+      } else if (exportTextType.value === 'ai') {
+        // 尝试多个可能的AI文本字段名
+        return (page.ai_processed_text && page.ai_processed_text.trim().length > 0) ||
+               (page.ai_text && page.ai_text.trim().length > 0)
+      } else {
+        // 智能选择：有任意文本即可导出
+        return (page.ocr_text && page.ocr_text.trim().length > 0) ||
+               (page.ai_processed_text && page.ai_processed_text.trim().length > 0) ||
+               (page.ai_text && page.ai_text.trim().length > 0) ||
+               (page.original_text && page.original_text.trim().length > 0) ||
+               (page.text && page.text.trim().length > 0)
+      }
+    })
+
+
+
+    return exportablePages.length
+  } catch (error) {
+    console.error('计算可导出页数失败:', error)
+    return 0
+  }
+}
+
+// 获取当前记录的可导出页面数量
+const getCurrentRecordExportablePages = () => {
+  if (!selectedRecord.value || selectedPages.value.length === 0) {
+    return 0
+  }
+
+  try {
+    // 根据文本类型筛选可导出的页面
+    const exportablePages = selectedPages.value.filter((page: any) => {
+      if (exportTextType.value === 'ocr') {
+        return page.ocr_text && page.ocr_text.trim().length > 0
+      } else if (exportTextType.value === 'ai') {
+        // 尝试多个可能的AI文本字段名
+        return (page.ai_processed_text && page.ai_processed_text.trim().length > 0) ||
+               (page.ai_text && page.ai_text.trim().length > 0)
+      } else {
+        // 智能选择：有任意文本即可导出
+        return (page.ocr_text && page.ocr_text.trim().length > 0) ||
+               (page.ai_processed_text && page.ai_processed_text.trim().length > 0) ||
+               (page.ai_text && page.ai_text.trim().length > 0) ||
+               (page.original_text && page.original_text.trim().length > 0) ||
+               (page.text && page.text.trim().length > 0)
+      }
+    })
+
+    return exportablePages.length
+  } catch (error) {
+    console.error('计算当前记录可导出页数失败:', error)
+    return 0
+  }
+}
+
+// 判断导出是否应该禁用
+const isExportDisabled = () => {
+  if (exportMode.value === 'single') {
+    return getCurrentRecordExportablePages() === 0
+  } else if (exportMode.value === 'document') {
+    return getDocumentExportablePages() === 0
+  }
+  return false
+}
+
+// 获取导出禁用的原因
+const getExportDisabledReason = () => {
+  if (exportMode.value === 'single') {
+    if (selectedPages.value.length === 0) {
+      return '没有可导出的页面'
+    } else if (getCurrentRecordExportablePages() === 0) {
+      return '当前选择的文本类型没有可导出的内容'
+    }
+  } else if (exportMode.value === 'document' && getDocumentExportablePages() === 0) {
+    return '当前选择的文本类型没有可导出的内容'
+  }
+  return ''
+}
+
+// 判断任务类型
+const getTaskType = (record: any) => {
+  // 检查是否有AI处理结果
+  if (selectedPages.value && selectedPages.value.length > 0) {
+    const hasAIText = selectedPages.value.some((page: any) =>
+      (page.ai_processed_text && page.ai_processed_text.trim().length > 0) ||
+      (page.ai_text && page.ai_text.trim().length > 0)
+    )
+    if (hasAIText) {
+      return 'AI处理'
+    }
+  }
+
+  // 默认为OCR处理
+  return 'OCR识别'
+}
+
+// 获取任务类型标识（用于列表显示）
+const getTaskTypeForRecord = (record: any) => {
+  // 根据ai_model字段的前缀来判断任务类型
+  if (record.ai_model) {
+    if (record.ai_model.startsWith('AI-')) {
+      return 'AI 文本处理'
+    }
+  }
+
+  // 没有AI-前缀的都是OCR任务（包括旧数据）
+  return 'AI OCR'
 }
 
 // 生命周期
@@ -152,6 +370,11 @@ onMounted(async () => {
 // 监听导出格式变化，实时保存
 watch(exportFormat, (newFormat) => {
   saveExportFormat(newFormat)
+})
+
+// 监听文本类型变化，实时保存
+watch(exportTextType, (newType) => {
+  saveExportTextType(newType)
 })
 
 // 方法
@@ -275,6 +498,33 @@ const renderAIProcessedText = (text: string) => {
              .replace(/\n/g, '<br>')
 }
 
+// 将markdown转换为纯文本（通过HTML渲染）
+const convertMarkdownToPlainText = (markdown: string): string => {
+  if (!markdown) return ''
+
+  try {
+    // 首先渲染markdown为HTML
+    const html = renderMarkdown(markdown)
+
+    // 创建临时DOM元素来提取纯文本
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = html
+
+    // 获取纯文本内容
+    const plainText = tempDiv.textContent || tempDiv.innerText || ''
+
+    // 清理多余的空行和空格
+    return plainText
+      .replace(/\n{3,}/g, '\n\n') // 多个换行符合并为两个
+      .replace(/[ \t]+/g, ' ') // 多个空格合并为一个
+      .trim()
+  } catch (error) {
+    console.error('转换markdown为纯文本失败:', error)
+    // 如果转换失败，返回原始markdown
+    return markdown
+  }
+}
+
 // 导出历史记录
 const handleExport = async () => {
   try {
@@ -285,14 +535,33 @@ const handleExport = async () => {
       return
     }
 
+    // 检查是否有可导出的内容
+    if (isExportDisabled()) {
+      window.dispatchEvent(new CustomEvent('show-warning', {
+        detail: getExportDisabledReason()
+      }))
+      return
+    }
+
     let content = ''
     let defaultFileName = ''
 
     if (exportMode.value === 'document') {
       // 按文档导出所有相关记录
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
+      const timestamp = getLocalTimestamp()
       const docName = selectedRecord.value.document_name || '文档'
-      defaultFileName = `${docName}_完整记录_${timestamp}.${exportFormat.value}`
+
+      // 根据选择的文本类型添加标识
+      let typeLabel = ''
+      if (exportTextType.value === 'ocr') {
+        typeLabel = '_OCR识别'
+      } else if (exportTextType.value === 'ai') {
+        typeLabel = '_AI处理'
+      } else {
+        typeLabel = '_智能选择'
+      }
+
+      defaultFileName = `${docName}${typeLabel}_所有历史_${timestamp}.${exportFormat.value}`
 
       if (exportFormat.value === 'docx') {
         content = await generateDocumentDocxContent()
@@ -301,15 +570,26 @@ const handleExport = async () => {
       }
     } else {
       // 单个记录导出
-      if (selectedPages.value.length === 0) {
+      if (getCurrentRecordExportablePages() === 0) {
         window.dispatchEvent(new CustomEvent('show-warning', {
-          detail: '没有可导出的内容'
+          detail: getExportDisabledReason()
         }))
         return
       }
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
+      const timestamp = getLocalTimestamp()
       const docName = selectedRecord.value.document_name || '历史记录'
-      defaultFileName = `${docName}_历史记录_${timestamp}.${exportFormat.value}`
+
+      // 根据选择的文本类型添加标识
+      let typeLabel = ''
+      if (exportTextType.value === 'ocr') {
+        typeLabel = '_OCR识别'
+      } else if (exportTextType.value === 'ai') {
+        typeLabel = '_AI处理'
+      } else {
+        typeLabel = '_智能选择'
+      }
+
+      defaultFileName = `${docName}${typeLabel}_历史记录_${timestamp}.${exportFormat.value}`
 
       if (exportFormat.value === 'docx') {
         content = await generateDocxContent()
@@ -422,8 +702,27 @@ const generateExportContent = () => {
 
   // 导出所有页面内容
   for (const page of selectedPages.value) {
-    // 优先使用 OCR 结果，其次是原始文本
-    const text = page.ocr_text || page.original_text || page.ai_processed_text || ''
+    // 根据用户选择的文本类型获取文本
+    let text = ''
+    if (exportTextType.value === 'ocr') {
+      text = page.ocr_text || ''
+    } else if (exportTextType.value === 'ai') {
+      // AI文本：根据导出格式决定是否渲染
+      const aiText = page.ai_processed_text || page.ai_text || ''
+      if (exportFormat.value === 'markdown') {
+        // markdown格式：导出原始markdown源码
+        text = aiText
+      } else if (exportFormat.value === 'html') {
+        // html格式：导出渲染后的HTML
+        text = renderMarkdown(aiText)
+      } else {
+        // 其他格式（txt、rtf）：导出渲染后转换的纯文本
+        text = convertMarkdownToPlainText(aiText)
+      }
+    } else {
+      // 智能选择：优先OCR，其次AI，最后原始文本
+      text = page.ocr_text || page.ai_processed_text || page.ai_text || page.original_text || page.text || ''
+    }
 
     if (text) {
       switch (exportFormat.value) {
@@ -477,14 +776,14 @@ const generateDocumentExportContent = async () => {
     // 添加文档信息头部
     switch (exportFormat.value) {
       case 'markdown':
-        content += `# ${record.document_name} - 完整文档\n\n`
+        content += `# ${record.document_name} - 所有历史记录\n\n`
         content += `**文件路径:** ${record.document_path}\n\n`
         content += `**总页数:** ${sortedPages.length}\n\n`
         content += `**处理记录数:** ${historyRecords.value.filter((r: any) => r.document_path === record.document_path).length}\n\n`
         content += '---\n\n'
         break
       case 'html':
-        content += `<h1>${record.document_name} - 完整文档</h1>\n`
+        content += `<h1>${record.document_name} - 所有历史记录</h1>\n`
         content += `<p><strong>文件路径:</strong> ${record.document_path}</p>\n`
         content += `<p><strong>总页数:</strong> ${sortedPages.length}</p>\n`
         content += `<p><strong>处理记录数:</strong> ${historyRecords.value.filter((r: any) => r.document_path === record.document_path).length}</p>\n`
@@ -494,7 +793,7 @@ const generateDocumentExportContent = async () => {
         content += '{\\rtf1\\ansi\\ansicpg936\\deff0\\deflang2052\n'
         content += '{\\fonttbl{\\f0\\fswiss\\fcharset134 Microsoft YaHei;}{\\f1\\fmodern\\fcharset0 Courier New;}}\n'
         content += '{\\colortbl;\\red0\\green0\\blue0;\\red0\\green0\\blue255;}\n'
-        content += `\\viewkind4\\uc1\\pard\\cf1\\lang2052\\f0\\fs28\\b ${record.document_name} - 完整文档\\par\n`
+        content += `\\viewkind4\\uc1\\pard\\cf1\\lang2052\\f0\\fs28\\b ${record.document_name} - 所有历史记录\\par\n`
         content += '\\par\n'
         content += `\\cf0\\fs22\\b0\\f1 文件路径: ${record.document_path}\\par\n`
         content += `总页数: ${sortedPages.length}\\par\n`
@@ -502,7 +801,7 @@ const generateDocumentExportContent = async () => {
         content += '\\par\n'
         break
       default: // txt
-        content += `${record.document_name} - 完整文档\n`
+        content += `${record.document_name} - 所有历史记录\n`
         content += `文件路径: ${record.document_path}\n`
         content += `总页数: ${sortedPages.length}\n`
         content += `处理记录数: ${historyRecords.value.filter((r: any) => r.document_path === record.document_path).length}\n`
@@ -511,7 +810,27 @@ const generateDocumentExportContent = async () => {
 
     // 导出所有页面内容
     for (const page of sortedPages) {
-      const text = page.ocr_text || page.original_text || page.ai_processed_text || ''
+      // 根据用户选择的文本类型获取文本
+      let text = ''
+      if (exportTextType.value === 'ocr') {
+        text = page.ocr_text || ''
+      } else if (exportTextType.value === 'ai') {
+        // AI文本：根据导出格式决定是否渲染
+        const aiText = page.ai_processed_text || page.ai_text || ''
+        if (exportFormat.value === 'markdown') {
+          // markdown格式：导出原始markdown源码
+          text = aiText
+        } else if (exportFormat.value === 'html') {
+          // html格式：导出渲染后的HTML
+          text = renderMarkdown(aiText)
+        } else {
+          // 其他格式（txt、rtf）：导出渲染后转换的纯文本
+          text = convertMarkdownToPlainText(aiText)
+        }
+      } else {
+        // 智能选择：优先OCR，其次AI，最后原始文本
+        text = page.ocr_text || page.ai_processed_text || page.ai_text || page.original_text || page.text || ''
+      }
 
       if (text) {
         switch (exportFormat.value) {
@@ -545,6 +864,19 @@ const generateDocumentExportContent = async () => {
   }
 }
 
+// 生成本地时间戳
+const getLocalTimestamp = (): string => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  const seconds = String(now.getSeconds()).padStart(2, '0')
+
+  return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`
+}
+
 const getFormatDisplayName = (format: string) => {
   switch (format) {
     case 'txt': return '文本文件'
@@ -572,7 +904,18 @@ const generateDocxContent = async (): Promise<string> => {
     let allText = ''
     for (let i = 0; i < selectedPages.value.length; i++) {
       const page = selectedPages.value[i]
-      const text = page.ocr_text || page.original_text || page.ai_processed_text || ''
+      // 根据用户选择的文本类型获取文本
+      let text = ''
+      if (exportTextType.value === 'ocr') {
+        text = page.ocr_text || ''
+      } else if (exportTextType.value === 'ai') {
+        // AI文本：DOCX格式使用渲染后的纯文本
+        const aiText = page.ai_processed_text || page.ai_text || ''
+        text = convertMarkdownToPlainText(aiText)
+      } else {
+        // 智能选择：优先OCR，其次AI，最后原始文本
+        text = page.ocr_text || page.ai_processed_text || page.ai_text || page.original_text || page.text || ''
+      }
       if (text) {
         if (i > 0) {
           allText += '\n\n[PAGE_BREAK]\n\n' // 分页符标记
@@ -638,7 +981,18 @@ const generateDocumentDocxContent = async (): Promise<string> => {
     let allText = ''
     for (let i = 0; i < sortedPages.length; i++) {
       const page = sortedPages[i]
-      const text = page.ocr_text || page.original_text || page.ai_processed_text || ''
+      // 根据用户选择的文本类型获取文本
+      let text = ''
+      if (exportTextType.value === 'ocr') {
+        text = page.ocr_text || ''
+      } else if (exportTextType.value === 'ai') {
+        // AI文本：DOCX格式使用渲染后的纯文本
+        const aiText = page.ai_processed_text || page.ai_text || ''
+        text = convertMarkdownToPlainText(aiText)
+      } else {
+        // 智能选择：优先OCR，其次AI，最后原始文本
+        text = page.ocr_text || page.ai_processed_text || page.ai_text || page.original_text || page.text || ''
+      }
       if (text) {
         if (i > 0) {
           allText += '\n\n[PAGE_BREAK]\n\n' // 分页符标记
@@ -1024,7 +1378,10 @@ const debouncedSearch = () => {
             >
               <div class="record-header">
                 <div class="record-title">
-                  {{ record.document_name || record.document_path?.split('/').pop() || '未知文档' }}
+                  <span class="document-name">{{ record.document_name || record.document_path?.split('/').pop() || '未知文档' }}</span>
+                  <span class="task-type-badge" :class="getTaskTypeForRecord(record) === 'AI 文本处理' ? 'ai-task' : 'ocr-task'">
+                    {{ getTaskTypeForRecord(record) }}
+                  </span>
                 </div>
                 <div class="record-actions">
                   <div class="record-status" :class="getStatusClass(record.status)">
@@ -1206,8 +1563,38 @@ const debouncedSearch = () => {
                 </label>
                 <label class="mode-option">
                   <input type="radio" v-model="exportMode" value="document" />
-                  <span>整个文档</span>
+                  <span>所有历史</span>
                 </label>
+              </div>
+            </div>
+
+            <!-- 文本类型选择 -->
+            <div class="text-type-selection">
+              <label>文本类型：</label>
+              <div class="text-type-options">
+                <label class="text-type-option">
+                  <input type="radio" v-model="exportTextType" value="auto" />
+                  <span class="option-label">🎯 智能选择</span>
+                </label>
+                <label class="text-type-option">
+                  <input type="radio" v-model="exportTextType" value="ocr" />
+                  <span class="option-label">🔍 OCR文本</span>
+                </label>
+                <label class="text-type-option">
+                  <input type="radio" v-model="exportTextType" value="ai" />
+                  <span class="option-label">🤖 AI文本</span>
+                </label>
+              </div>
+              <div class="text-type-description">
+                <p v-if="exportTextType === 'auto'" class="type-desc">
+                  <strong>智能选择：</strong>优先导出OCR识别文本，其次AI处理文本，最后原生文本
+                </p>
+                <p v-else-if="exportTextType === 'ocr'" class="type-desc">
+                  <strong>OCR文本：</strong>只导出OCR识别的文本内容，适合需要原始识别结果的场景
+                </p>
+                <p v-else-if="exportTextType === 'ai'" class="type-desc">
+                  <strong>AI文本：</strong>只导出AI处理的文本内容，包含格式化、纠错等优化结果
+                </p>
               </div>
             </div>
 
@@ -1251,18 +1638,32 @@ const debouncedSearch = () => {
               </div>
             </div>
 
-            <div class="export-info" v-if="selectedPages.length > 0 && exportMode === 'single'">
+            <div class="export-info" v-if="exportMode === 'single' && selectedPages.length > 0">
               <p>
-                <strong>页面数：</strong> {{ selectedPages.length }} 页
+                <strong>当前记录页面数：</strong> {{ selectedPages.length }} 页
+              </p>
+
+            </div>
+
+            <div class="export-info" v-if="exportMode === 'document' && getDocumentExportablePages() === 0">
+              <p class="no-content-warning">
+                <span class="warning-icon">⚠️</span>
+                当前选择的文本类型没有可导出的历史记录内容
               </p>
             </div>
+
+
           </div>
 
           <div class="dialog-actions">
             <button @click="showExportDialog = false" class="btn btn-secondary">
               取消
             </button>
-            <button @click="handleExport" class="btn btn-primary">
+            <button
+              @click="handleExport"
+              class="btn btn-primary"
+              :disabled="isExportDisabled()"
+            >
               导出
             </button>
           </div>
@@ -1523,6 +1924,38 @@ const debouncedSearch = () => {
   font-weight: 500;
   color: #333;
   font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.document-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-type-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* AI OCR 任务标识 */
+.task-type-badge.ocr-task {
+  background: #e3f2fd;
+  color: #1976d2;
+  border: 1px solid #bbdefb;
+}
+
+/* AI 文本处理任务标识 */
+.task-type-badge.ai-task {
+  background: #f3e5f5;
+  color: #7b1fa2;
+  border: 1px solid #ce93d8;
 }
 
 .record-status {
@@ -1923,7 +2356,7 @@ const debouncedSearch = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 1.25rem;
+  padding: 0.75rem 1rem;
   background: rgba(248, 249, 250, 0.95);
   backdrop-filter: blur(15px);
   border-bottom: 1px solid rgba(224, 224, 224, 0.3);
@@ -1932,13 +2365,13 @@ const debouncedSearch = () => {
 .dialog-header h3 {
   margin: 0;
   color: #333;
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 600;
 }
 
 .dialog-content {
-  padding: 1.25rem;
-  max-height: 60vh;
+  padding: 1rem;
+  max-height: 65vh;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #ccc #f0f0f0;
@@ -1963,24 +2396,24 @@ const debouncedSearch = () => {
 }
 
 .export-mode-selection {
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
 }
 
 .export-mode-selection > label {
   display: block;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.4rem;
   font-weight: 500;
   color: #333;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
 .mode-description {
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.6rem;
+  padding: 0.4rem 0.6rem;
   background: rgba(102, 126, 234, 0.05);
-  border-radius: 6px;
+  border-radius: 4px;
   border-left: 3px solid #667eea;
-  min-height: 1.5rem;
+  min-height: 1.2rem;
   display: flex;
   align-items: center;
 }
@@ -2031,6 +2464,85 @@ const debouncedSearch = () => {
   font-weight: 500;
   font-size: 0.9rem;
   white-space: nowrap;
+}
+
+/* 文本类型选择样式 */
+.text-type-selection {
+  margin-bottom: 0.75rem;
+}
+
+.text-type-selection > label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 500;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.text-type-options {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.text-type-option {
+  display: flex;
+  align-items: center;
+  padding: 0.45rem 0.6rem;
+  background: rgba(255, 255, 255, 0.8);
+  border: 2px solid rgba(224, 224, 224, 0.5);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+}
+
+.text-type-option:hover {
+  border-color: rgba(102, 126, 234, 0.6);
+  background: rgba(102, 126, 234, 0.05);
+}
+
+.text-type-option input[type="radio"] {
+  margin-right: 0.4rem;
+  accent-color: #667eea;
+}
+
+.text-type-option .option-label {
+  font-weight: 500;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.text-type-option input[type="radio"]:checked + .option-label {
+  color: #667eea;
+  font-weight: 600;
+}
+
+.text-type-option:has(input[type="radio"]:checked) {
+  background: rgba(102, 126, 234, 0.1);
+  border-color: #667eea;
+}
+
+.text-type-description {
+  background: rgba(248, 249, 250, 0.8);
+  border-radius: 4px;
+  padding: 0.5rem;
+  border-left: 3px solid #667eea;
+  font-size: 0.8rem;
+}
+
+.text-type-description .type-desc {
+  margin: 0;
+  line-height: 1.3;
+  color: #555;
+}
+
+.text-type-description .type-desc strong {
+  color: #667eea;
+  font-weight: 600;
 }
 
 .format-selection label {
@@ -2111,6 +2623,39 @@ const debouncedSearch = () => {
   margin-bottom: 0;
 }
 
+.export-info .no-content-warning {
+  color: #e74c3c;
+  font-weight: 500;
+  margin: 0.25rem 0 0 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.export-info .warning-icon {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.export-info .info-note {
+  color: #666;
+  font-size: 0.8rem;
+  margin: 0.25rem 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  line-height: 1.3;
+}
+
+.export-info .info-icon {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -2171,6 +2716,21 @@ const debouncedSearch = () => {
   box-shadow: 0 4px 12px rgba(108, 117, 125, 0.4);
 }
 
+/* 按钮禁用状态 */
+.btn:disabled {
+  background: #ccc !important;
+  color: #666 !important;
+  border-color: #ccc !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
+  opacity: 0.6;
+}
+
+.btn:disabled::before {
+  display: none;
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .export-dialog {
@@ -2180,9 +2740,18 @@ const debouncedSearch = () => {
   }
 
   .mode-options,
+  .text-type-options,
   .format-options {
     grid-template-columns: 1fr;
     gap: 0.5rem;
+  }
+
+  .text-type-options {
+    flex-direction: column;
+  }
+
+  .text-type-option {
+    justify-content: flex-start;
   }
 
   .dialog-header,

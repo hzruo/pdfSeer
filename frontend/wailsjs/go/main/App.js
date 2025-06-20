@@ -6,6 +6,10 @@ export function CancelProcessing() {
   return window['go']['main']['App']['CancelProcessing']();
 }
 
+export function CheckAIProcessedPages(arg1) {
+  return window['go']['main']['App']['CheckAIProcessedPages'](arg1);
+}
+
 export function CheckProcessedPages(arg1) {
   return window['go']['main']['App']['CheckProcessedPages'](arg1);
 }
@@ -110,8 +114,24 @@ export function ProcessPagesForce(arg1) {
   return window['go']['main']['App']['ProcessPagesForce'](arg1);
 }
 
+export function ProcessSinglePage(arg1) {
+  return window['go']['main']['App']['ProcessSinglePage'](arg1);
+}
+
+export function ProcessSinglePageForce(arg1) {
+  return window['go']['main']['App']['ProcessSinglePageForce'](arg1);
+}
+
 export function ProcessWithAI(arg1, arg2) {
   return window['go']['main']['App']['ProcessWithAI'](arg1, arg2);
+}
+
+export function ProcessWithAIBatch(arg1, arg2) {
+  return window['go']['main']['App']['ProcessWithAIBatch'](arg1, arg2);
+}
+
+export function ProcessWithAIBatchForce(arg1, arg2) {
+  return window['go']['main']['App']['ProcessWithAIBatchForce'](arg1, arg2);
 }
 
 export function ResumeProcessing() {

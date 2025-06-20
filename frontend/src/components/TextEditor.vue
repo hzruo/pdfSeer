@@ -11,10 +11,14 @@ interface Props {
   ocrText?: string
   aiText?: string
   readonly?: boolean
+  documentName?: string
+  initialTab?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  readonly: false
+  readonly: false,
+  documentName: '文档',
+  initialTab: 'ocr'
 })
 
 // Emits
@@ -69,14 +73,20 @@ const centerWindow = () => {
   }
 }
 
-// 智能选择初始tab：如果有AI文本则优先显示AI tab
+// 根据传入的初始tab类型设置活动tab
 const initializeActiveTab = () => {
-  if (props.aiText) {
-    activeTab.value = 'ai'
-  } else if (props.ocrText) {
-    activeTab.value = 'ocr'
+  // 优先使用传入的初始tab类型
+  if (props.initialTab && ['original', 'ocr', 'ai'].includes(props.initialTab)) {
+    activeTab.value = props.initialTab as 'original' | 'ocr' | 'ai'
   } else {
-    activeTab.value = 'original'
+    // 如果没有传入或传入无效，则智能选择
+    if (props.aiText) {
+      activeTab.value = 'ai'
+    } else if (props.ocrText) {
+      activeTab.value = 'ocr'
+    } else {
+      activeTab.value = 'original'
+    }
   }
 }
 
@@ -270,7 +280,7 @@ const copyText = () => {
 
   if (navigator.clipboard) {
     navigator.clipboard.writeText(textToCopy).then(() => {
-      showFlashMessage('✅ 文本已复制到剪贴板')
+      // showFlashMessage('✅ 文本已复制到剪贴板')
       // 同时发送全局事件（兼容性）
       window.dispatchEvent(new CustomEvent('show-success', {
         detail: '文本已复制到剪贴板'
@@ -296,7 +306,7 @@ const fallbackCopy = (text: string) => {
   try {
     const successful = document.execCommand('copy')
     if (successful) {
-      showFlashMessage('✅ 文本已复制到剪贴板')
+      // showFlashMessage('✅ 文本已复制到剪贴板')
       window.dispatchEvent(new CustomEvent('show-success', {
         detail: '文本已复制到剪贴板'
       }))
@@ -304,7 +314,7 @@ const fallbackCopy = (text: string) => {
       throw new Error('复制命令执行失败')
     }
   } catch (err) {
-    showFlashMessage('❌ 复制失败，请手动选择文本复制', 'error')
+    // showFlashMessage('❌ 复制失败，请手动选择文本复制', 'error')
     window.dispatchEvent(new CustomEvent('show-error', {
       detail: '复制失败'
     }))
@@ -337,7 +347,10 @@ const handleExport = async () => {
       'ocr': 'OCR识别',
       'ai': 'AI处理'
     }
-    const defaultFileName = `第${props.pageNumber}页_${tabNames[activeTab.value as keyof typeof tabNames]}.${exportFormat.value}`
+    const typeLabel = tabNames[activeTab.value as keyof typeof tabNames]
+    const timestamp = getLocalTimestamp()
+    const documentName = props.documentName || '文档'
+    const defaultFileName = `${documentName}_第${props.pageNumber}页_${typeLabel}_${timestamp}.${exportFormat.value}`
 
     if (exportFormat.value === 'docx') {
       // 显示生成提示
@@ -404,10 +417,26 @@ const generateExportContent = (text: string) => {
   }
   const tabName = tabNames[activeTab.value as keyof typeof tabNames]
 
+  // 如果是AI文本，根据导出格式决定是否渲染
+  let processedText = text
+  if (activeTab.value === 'ai') {
+    if (exportFormat.value === 'markdown') {
+      // markdown格式：保持原始markdown源码
+      processedText = text
+    } else if (exportFormat.value === 'html') {
+      // html格式：渲染markdown为HTML，但在模板中不需要额外处理
+      processedText = renderMarkdown(text)
+    } else {
+      // 其他格式（txt、rtf）：转换为纯文本
+      processedText = convertMarkdownToPlainText(text)
+    }
+  }
+
   switch (exportFormat.value) {
     case 'markdown':
-      return `# 第 ${props.pageNumber} 页 - ${tabName}\n\n${text}\n`
+      return `# 第 ${props.pageNumber} 页 - ${tabName}\n\n${processedText}\n`
     case 'html':
+      const htmlContent = activeTab.value === 'ai' ? processedText : processedText.replace(/\n/g, '<br>\n')
       return `<!DOCTYPE html>
 <html>
 <head>
@@ -421,13 +450,13 @@ const generateExportContent = (text: string) => {
 </head>
 <body>
     <h1>第 ${props.pageNumber} 页 - ${tabName}</h1>
-    <div class="content">${text.replace(/\n/g, '<br>\n')}</div>
+    <div class="content">${htmlContent}</div>
 </body>
 </html>`
     case 'rtf':
-      return generateWordContent(text, tabName)
+      return generateWordContent(processedText, tabName)
     default: // txt
-      return `第 ${props.pageNumber} 页 - ${tabName}\n${'='.repeat(50)}\n\n${text}`
+      return `第 ${props.pageNumber} 页 - ${tabName}\n${'='.repeat(50)}\n\n${processedText}`
   }
 }
 
@@ -445,6 +474,46 @@ const generateWordContent = (text: string, tabName: string) => {
   return rtfContent
 }
 
+// 将markdown转换为纯文本（通过HTML渲染）
+const convertMarkdownToPlainText = (markdown: string): string => {
+  if (!markdown) return ''
+
+  try {
+    // 首先渲染markdown为HTML
+    const html = renderMarkdown(markdown)
+
+    // 创建临时DOM元素来提取纯文本
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = html
+
+    // 获取纯文本内容
+    const plainText = tempDiv.textContent || tempDiv.innerText || ''
+
+    // 清理多余的空行和空格
+    return plainText
+      .replace(/\n{3,}/g, '\n\n') // 多个换行符合并为两个
+      .replace(/[ \t]+/g, ' ') // 多个空格合并为一个
+      .trim()
+  } catch (error) {
+    console.error('转换markdown为纯文本失败:', error)
+    // 如果转换失败，返回原始markdown
+    return markdown
+  }
+}
+
+// 生成本地时间戳
+const getLocalTimestamp = (): string => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  const seconds = String(now.getSeconds()).padStart(2, '0')
+
+  return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`
+}
+
 const getFormatDisplayName = (format: string) => {
   switch (format) {
     case 'txt': return '文本文件'
@@ -459,15 +528,21 @@ const getFormatDisplayName = (format: string) => {
 // 生成DOCX内容（返回base64字符串用于后端保存）
 const generateDocxContent = async (text: string, _tabName: string): Promise<string> => {
   try {
+    // 如果是AI文本，转换为纯文本用于DOCX
+    let processedText = text
+    if (activeTab.value === 'ai') {
+      processedText = convertMarkdownToPlainText(text)
+    }
+
     // 检测文本中是否包含表格
-    const hasTable = detectTable(text)
+    const hasTable = detectTable(processedText)
 
     const doc = new Document({
       sections: [{
         properties: {},
         children: [
           // 直接添加内容，不要标题
-          ...(hasTable ? generateTableContent(text) : generateTextContent(text))
+          ...(hasTable ? generateTableContent(processedText) : generateTextContent(processedText))
         ],
       }],
     })
