@@ -233,7 +233,8 @@ const formatStatus = (status: string) => {
   const statusMap: Record<string, string> = {
     'processing': '处理中',
     'completed': '已完成',
-    'failed': '失败'
+    'failed': '失败',
+    'cancelled': '已取消'
   }
   return statusMap[status] || status
 }
@@ -242,7 +243,8 @@ const getStatusClass = (status: string) => {
   const classMap: Record<string, string> = {
     'processing': 'status-processing',
     'completed': 'status-completed',
-    'failed': 'status-failed'
+    'failed': 'status-failed',
+    'cancelled': 'status-cancelled'
   }
   return classMap[status] || ''
 }
@@ -1543,6 +1545,11 @@ const debouncedSearch = () => {
 .status-failed {
   background: #f8d7da;
   color: #721c24;
+}
+
+.status-cancelled {
+  background: #fff3cd;
+  color: #856404;
 }
 
 .record-meta {

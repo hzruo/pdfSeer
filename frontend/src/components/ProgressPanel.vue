@@ -1,5 +1,6 @@
 <script lang="ts" setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { PauseProcessing, ResumeProcessing, CancelProcessing, GetProcessingState } from '../../wailsjs/go/main/App'
 
 // Props
 interface Props {
@@ -10,9 +11,52 @@ interface Props {
     status: string
     error?: string
   }
+  processingState?: number // 0: idle, 1: running, 2: paused, 3: cancelling
 }
 
 const props = defineProps<Props>()
+
+// Emits
+const emit = defineEmits<{
+  pause: []
+  resume: []
+  cancel: []
+}>()
+
+// 状态
+const isPaused = computed(() => props.processingState === 2)
+const isRunning = computed(() => props.processingState === 1)
+const isCancelling = computed(() => props.processingState === 3)
+
+// 暂停处理
+const handlePause = async () => {
+  try {
+    await PauseProcessing()
+    emit('pause')
+  } catch (error) {
+    console.error('暂停处理失败:', error)
+  }
+}
+
+// 继续处理
+const handleResume = async () => {
+  try {
+    await ResumeProcessing()
+    emit('resume')
+  } catch (error) {
+    console.error('继续处理失败:', error)
+  }
+}
+
+// 取消处理
+const handleCancel = async () => {
+  try {
+    await CancelProcessing()
+    emit('cancel')
+  } catch (error) {
+    console.error('取消处理失败:', error)
+  }
+}
 
 // 计算属性
 const progressPercentage = computed(() => {
@@ -38,12 +82,51 @@ const hasError = computed(() => {
     <div class="progress-panel">
       <!-- 头部 -->
       <div class="panel-header">
-        <h3>{{ hasError ? '处理出错' : isComplete ? '处理完成' : '正在处理' }}</h3>
-        <div class="status-indicator" :class="{
-          'status-processing': !isComplete && !hasError,
-          'status-complete': isComplete,
-          'status-error': hasError
-        }"></div>
+        <h3>{{
+          hasError ? '处理出错' :
+          isComplete ? '处理完成' :
+          isPaused ? '处理已暂停' :
+          isCancelling ? '正在取消...' :
+          '正在处理'
+        }}</h3>
+        <div class="header-actions">
+          <!-- 暂停/继续按钮 -->
+          <button
+            v-if="isRunning && !hasError && !isComplete"
+            @click="handlePause"
+            class="control-btn pause-btn"
+            title="暂停处理"
+          >
+            ⏸️
+          </button>
+
+          <button
+            v-if="isPaused && !hasError && !isComplete"
+            @click="handleResume"
+            class="control-btn resume-btn"
+            title="继续处理"
+          >
+            ▶️
+          </button>
+
+          <!-- 取消按钮 -->
+          <button
+            v-if="(isRunning || isPaused) && !hasError && !isComplete && !isCancelling"
+            @click="handleCancel"
+            class="control-btn cancel-btn"
+            title="取消处理"
+          >
+            ⏹️
+          </button>
+
+          <div class="status-indicator" :class="{
+            'status-processing': isRunning && !hasError,
+            'status-paused': isPaused,
+            'status-complete': isComplete,
+            'status-error': hasError,
+            'status-cancelling': isCancelling
+          }"></div>
+        </div>
       </div>
 
       <!-- 进度条 -->
@@ -145,6 +228,55 @@ const hasError = computed(() => {
   font-weight: 600;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.control-btn {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.control-btn:active {
+  transform: scale(0.95);
+}
+
+.pause-btn:hover {
+  background-color: rgba(255, 193, 7, 0.1);
+}
+
+.resume-btn:hover {
+  background-color: rgba(40, 167, 69, 0.1);
+}
+
+.control-btn.cancel-btn {
+  background: none !important;
+  border: none !important;
+  font-size: 1.2rem !important;
+  filter: sepia(1) hue-rotate(320deg) saturate(6) brightness(1) !important;
+  /* 使用filter让emoji显示为红色 */
+}
+
+.control-btn.cancel-btn:hover {
+  background-color: rgba(220, 53, 69, 0.1) !important;
+}
+
+.control-btn.cancel-btn:active {
+  background-color: rgba(220, 53, 69, 0.2) !important;
+}
+
 .status-indicator {
   width: 12px;
   height: 12px;
@@ -156,6 +288,11 @@ const hasError = computed(() => {
   background: #007bff;
 }
 
+.status-paused {
+  background: #ffc107;
+  animation: none;
+}
+
 .status-complete {
   background: #28a745;
   animation: none;
@@ -164,6 +301,11 @@ const hasError = computed(() => {
 .status-error {
   background: #dc3545;
   animation: none;
+}
+
+.status-cancelling {
+  background: #6c757d;
+  animation: pulse 1s infinite;
 }
 
 @keyframes pulse {

@@ -18,6 +18,7 @@ const (
 	StatusProcessing ProcessingStatus = "processing"
 	StatusCompleted  ProcessingStatus = "completed"
 	StatusFailed     ProcessingStatus = "failed"
+	StatusCancelled  ProcessingStatus = "cancelled"
 )
 
 // HistoryRecord 历史记录
@@ -36,14 +37,14 @@ type HistoryRecord struct {
 
 // HistoryPage 历史页面
 type HistoryPage struct {
-	ID               int     `db:"id" json:"id"`
-	HistoryID        int     `db:"history_id" json:"history_id"`
-	PageNumber       int     `db:"page_number" json:"page_number"`
-	OriginalText     string  `db:"original_text" json:"original_text"`
-	OCRText          string  `db:"ocr_text" json:"ocr_text"`
-	AIProcessedText  string  `db:"ai_processed_text" json:"ai_processed_text"`
-	ProcessingTime   float64 `db:"processing_time" json:"processing_time"` // 处理时间（秒）
-	CreatedAt        string  `db:"created_at" json:"created_at"`
+	ID              int     `db:"id" json:"id"`
+	HistoryID       int     `db:"history_id" json:"history_id"`
+	PageNumber      int     `db:"page_number" json:"page_number"`
+	OriginalText    string  `db:"original_text" json:"original_text"`
+	OCRText         string  `db:"ocr_text" json:"ocr_text"`
+	AIProcessedText string  `db:"ai_processed_text" json:"ai_processed_text"`
+	ProcessingTime  float64 `db:"processing_time" json:"processing_time"` // 处理时间（秒）
+	CreatedAt       string  `db:"created_at" json:"created_at"`
 }
 
 // SearchResult 搜索结果
@@ -58,7 +59,7 @@ type SearchResult struct {
 
 // HistoryManager 历史记录管理器
 type HistoryManager struct {
-	db        *sqlx.DB
+	db         *sqlx.DB
 	ftsEnabled bool // 是否支持FTS5
 }
 
@@ -93,6 +94,11 @@ func NewHistoryManager() (*HistoryManager, error) {
 		return nil, fmt.Errorf("初始化数据库表失败: %w", err)
 	}
 
+	// 运行数据库迁移
+	if err := hm.runMigrations(); err != nil {
+		return nil, fmt.Errorf("运行数据库迁移失败: %w", err)
+	}
+
 	return hm, nil
 }
 
@@ -118,7 +124,7 @@ func (hm *HistoryManager) initTables() error {
 		document_path TEXT NOT NULL,
 		document_name TEXT NOT NULL,
 		page_count INTEGER NOT NULL,
-		status TEXT CHECK(status IN ('processing', 'completed', 'failed')) DEFAULT 'processing',
+		status TEXT CHECK(status IN ('processing', 'completed', 'failed', 'cancelled')) DEFAULT 'processing',
 		ai_model TEXT,
 		cost REAL DEFAULT 0,
 		processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -177,15 +183,64 @@ func (hm *HistoryManager) initTables() error {
 	return nil
 }
 
+// runMigrations 运行数据库迁移
+func (hm *HistoryManager) runMigrations() error {
+	// 检查是否需要添加 cancelled 状态支持
+	var count int
+	err := hm.db.Get(&count, "SELECT COUNT(*) FROM processing_history WHERE status = 'cancelled'")
+	if err != nil {
+		// 如果查询失败，说明可能需要更新表结构
+		// 尝试更新表结构以支持 cancelled 状态
+
+		// 在事务中执行迁移
+		tx, err := hm.db.Beginx()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		// 分别执行每个SQL语句
+		statements := []string{
+			`CREATE TABLE processing_history_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				document_path TEXT NOT NULL,
+				document_name TEXT NOT NULL,
+				page_count INTEGER NOT NULL,
+				status TEXT CHECK(status IN ('processing', 'completed', 'failed', 'cancelled')) DEFAULT 'processing',
+				ai_model TEXT,
+				cost REAL DEFAULT 0,
+				processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				completed_at DATETIME,
+				error_message TEXT
+			)`,
+			`INSERT INTO processing_history_new SELECT * FROM processing_history`,
+			`DROP TABLE processing_history`,
+			`ALTER TABLE processing_history_new RENAME TO processing_history`,
+			`CREATE INDEX IF NOT EXISTS idx_history_status ON processing_history(status)`,
+			`CREATE INDEX IF NOT EXISTS idx_history_date ON processing_history(processed_at)`,
+		}
+
+		for _, stmt := range statements {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("执行迁移语句失败: %w", err)
+			}
+		}
+
+		return tx.Commit()
+	}
+
+	return nil
+}
+
 // CreateRecord 创建历史记录
 func (hm *HistoryManager) CreateRecord(documentPath string, pageCount int, aiModel string) (*HistoryRecord, error) {
 	documentName := filepath.Base(documentPath)
-	
+
 	query := `
 	INSERT INTO processing_history (document_path, document_name, page_count, ai_model)
 	VALUES (?, ?, ?, ?)
 	`
-	
+
 	result, err := hm.db.Exec(query, documentPath, documentName, pageCount, aiModel)
 	if err != nil {
 		return nil, fmt.Errorf("创建历史记录失败: %w", err)
@@ -203,12 +258,12 @@ func (hm *HistoryManager) CreateRecord(documentPath string, pageCount int, aiMod
 func (hm *HistoryManager) GetRecord(id int) (*HistoryRecord, error) {
 	var record HistoryRecord
 	query := `SELECT * FROM processing_history WHERE id = ?`
-	
+
 	err := hm.db.Get(&record, query, id)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	
+
 	return &record, err
 }
 
@@ -236,10 +291,10 @@ func (hm *HistoryManager) AddPage(page *HistoryPage) error {
 	(history_id, page_number, original_text, ocr_text, ai_processed_text, processing_time)
 	VALUES (?, ?, ?, ?, ?, ?)
 	`
-	
-	_, err := hm.db.Exec(query, page.HistoryID, page.PageNumber, 
+
+	_, err := hm.db.Exec(query, page.HistoryID, page.PageNumber,
 		page.OriginalText, page.OCRText, page.AIProcessedText, page.ProcessingTime)
-	
+
 	if err != nil {
 		return err
 	}
@@ -267,7 +322,7 @@ func (hm *HistoryManager) updateSearchIndex(historyID int, pageNumber int) error
 	JOIN processing_history ph ON hp.history_id = ph.id
 	WHERE hp.history_id = ? AND hp.page_number = ?
 	`
-	
+
 	_, err := hm.db.Exec(query, historyID, pageNumber)
 	return err
 }
@@ -280,7 +335,7 @@ func (hm *HistoryManager) GetRecentRecords(limit int) ([]*HistoryRecord, error) 
 	ORDER BY processed_at DESC 
 	LIMIT ?
 	`
-	
+
 	err := hm.db.Select(&records, query, limit)
 	return records, err
 }

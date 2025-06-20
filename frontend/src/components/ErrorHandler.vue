@@ -18,23 +18,29 @@ const maxErrors = 5
 
 // 生命周期
 onMounted(() => {
-  // 监听各种错误事件
+  // 监听 Wails 后端事件
   EventsOn('error', handleError)
   EventsOn('processing-error', handleProcessingError)
   EventsOn('ai-processing-error', handleAIError)
-  EventsOn('warning', handleWarning)
-  EventsOn('info', handleInfo)
-  EventsOn('success', handleSuccess)
+
+  // 监听 DOM 事件（前端发送的事件）
+  window.addEventListener('warning', handleWarningEvent)
+  window.addEventListener('info', handleInfoEvent)
+  window.addEventListener('success', handleSuccessEvent)
+  window.addEventListener('error', handleErrorEvent)
 })
 
 onUnmounted(() => {
-  // 清理事件监听
+  // 清理 Wails 事件监听
   EventsOff('error')
   EventsOff('processing-error')
   EventsOff('ai-processing-error')
-  EventsOff('warning')
-  EventsOff('info')
-  EventsOff('success')
+
+  // 清理 DOM 事件监听
+  window.removeEventListener('warning', handleWarningEvent)
+  window.removeEventListener('info', handleInfoEvent)
+  window.removeEventListener('success', handleSuccessEvent)
+  window.removeEventListener('error', handleErrorEvent)
 })
 
 // 方法
@@ -127,6 +133,23 @@ const handleSuccess = (message: string) => {
     message: message,
     duration: 3000,
   })
+}
+
+// DOM 事件处理器
+const handleWarningEvent = (event: any) => {
+  handleWarning(event.detail)
+}
+
+const handleInfoEvent = (event: any) => {
+  handleInfo(event.detail)
+}
+
+const handleSuccessEvent = (event: any) => {
+  handleSuccess(event.detail)
+}
+
+const handleErrorEvent = (event: any) => {
+  handleError(event.detail)
 }
 
 const getErrorIcon = (type: string) => {

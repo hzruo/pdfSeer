@@ -8,6 +8,8 @@ import {document} from '../models';
 import {ocr} from '../models';
 import {frontend} from '../models';
 
+export function CancelProcessing():Promise<void>;
+
 export function CheckProcessedPages(arg1:Array<number>):Promise<Record<string, any>>;
 
 export function CheckSystemDependencies():Promise<system.SystemInfo>;
@@ -40,6 +42,8 @@ export function GetPDFPath():Promise<string>;
 
 export function GetPageImage(arg1:number):Promise<Array<number>>;
 
+export function GetProcessingState():Promise<Record<string, any>>;
+
 export function GetProcessingStats():Promise<Record<string, any>>;
 
 export function GetSupportedFormats():Promise<Array<string>>;
@@ -52,11 +56,15 @@ export function LoadDocument(arg1:string):Promise<void>;
 
 export function LoadPDF(arg1:string):Promise<void>;
 
+export function PauseProcessing():Promise<void>;
+
 export function ProcessPages(arg1:Array<number>):Promise<void>;
 
 export function ProcessPagesForce(arg1:Array<number>):Promise<void>;
 
 export function ProcessWithAI(arg1:Array<number>,arg2:string):Promise<void>;
+
+export function ResumeProcessing():Promise<void>;
 
 export function SaveBinaryFileWithDialog(arg1:string,arg2:string,arg3:Array<frontend.FileFilter>):Promise<string>;
 

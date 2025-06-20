@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"pdf-ocr-ai/pkg/cache"
 	"pdf-ocr-ai/pkg/config"
 	"pdf-ocr-ai/pkg/document"
@@ -18,6 +17,8 @@ import (
 	"pdf-ocr-ai/pkg/ocr"
 	"pdf-ocr-ai/pkg/pdf"
 	"pdf-ocr-ai/pkg/system"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ProgressUpdate 进度更新
@@ -28,6 +29,16 @@ type ProgressUpdate struct {
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
 }
+
+// ProcessingState 处理状态
+type ProcessingState int
+
+const (
+	ProcessingStateIdle ProcessingState = iota
+	ProcessingStateRunning
+	ProcessingStatePaused
+	ProcessingStateCancelling
+)
 
 // App struct
 type App struct {
@@ -40,6 +51,14 @@ type App struct {
 	ocrClient         *ocr.OpenAIClient
 	currentDoc        *pdf.PDFDocument
 	mu                sync.RWMutex
+	// 批量处理控制
+	processingCancel context.CancelFunc
+	processingMu     sync.Mutex
+	processingState  ProcessingState
+	pauseSignal      chan bool
+	resumeSignal     chan bool
+	currentBatch     []int // 当前批次的页面
+	processedInBatch int   // 当前批次已处理的页面数
 }
 
 // NewApp creates a new App application struct
@@ -258,6 +277,83 @@ func (a *App) ProcessPagesForce(pageNumbers []int) {
 	go a.processPagesBatch(pageNumbers, true)
 }
 
+// PauseProcessing 暂停当前的批量处理
+func (a *App) PauseProcessing() {
+	a.processingMu.Lock()
+	defer a.processingMu.Unlock()
+
+	if a.processingState == ProcessingStateRunning {
+		log.Printf("用户请求暂停批量处理")
+		a.processingState = ProcessingStatePaused
+
+		// 发送暂停信号
+		select {
+		case a.pauseSignal <- true:
+		default:
+		}
+
+		// 发送暂停通知
+		runtime.EventsEmit(a.ctx, "processing-paused", map[string]interface{}{
+			"message": "批量处理已暂停",
+		})
+	}
+}
+
+// ResumeProcessing 继续当前的批量处理
+func (a *App) ResumeProcessing() {
+	a.processingMu.Lock()
+	defer a.processingMu.Unlock()
+
+	if a.processingState == ProcessingStatePaused {
+		log.Printf("用户请求继续批量处理")
+		a.processingState = ProcessingStateRunning
+
+		// 发送继续信号
+		select {
+		case a.resumeSignal <- true:
+		default:
+		}
+
+		// 发送继续通知
+		runtime.EventsEmit(a.ctx, "processing-resumed", map[string]interface{}{
+			"message": "批量处理已继续",
+		})
+	}
+}
+
+// CancelProcessing 取消当前的批量处理
+func (a *App) CancelProcessing() {
+	a.processingMu.Lock()
+	defer a.processingMu.Unlock()
+
+	if a.processingState == ProcessingStateRunning || a.processingState == ProcessingStatePaused {
+		log.Printf("用户请求取消批量处理")
+		a.processingState = ProcessingStateCancelling
+
+		if a.processingCancel != nil {
+			a.processingCancel()
+		}
+
+		// 发送取消通知，但不立即清理状态，让批量处理函数自己清理
+		runtime.EventsEmit(a.ctx, "processing-cancelled", map[string]interface{}{
+			"message": "批量处理已取消",
+		})
+	}
+}
+
+// GetProcessingState 获取当前处理状态
+func (a *App) GetProcessingState() map[string]interface{} {
+	a.processingMu.Lock()
+	defer a.processingMu.Unlock()
+
+	return map[string]interface{}{
+		"state":           int(a.processingState),
+		"current_batch":   a.currentBatch,
+		"processed_count": a.processedInBatch,
+		"total_count":     len(a.currentBatch),
+	}
+}
+
 // CheckProcessedPages 检查哪些页面已经处理过
 func (a *App) CheckProcessedPages(pageNumbers []int) map[string]interface{} {
 	a.mu.RLock()
@@ -265,10 +361,10 @@ func (a *App) CheckProcessedPages(pageNumbers []int) map[string]interface{} {
 	a.mu.RUnlock()
 
 	result := map[string]interface{}{
-		"total_pages":     len(pageNumbers),
-		"processed_pages": []int{},
+		"total_pages":       len(pageNumbers),
+		"processed_pages":   []int{},
 		"unprocessed_pages": []int{},
-		"processed_count": 0,
+		"processed_count":   0,
 	}
 
 	if doc == nil {
@@ -418,9 +514,45 @@ func (a *App) processPagesBatch(pageNumbers []int, forceReprocess bool) {
 		return
 	}
 
-	// 创建历史记录
+	// 初始化处理状态
+	a.processingMu.Lock()
+	processingCtx, cancel := context.WithCancel(a.ctx)
+	a.processingCancel = cancel
+	a.processingState = ProcessingStateRunning
+	a.currentBatch = pageNumbers
+	a.processedInBatch = 0
+
+	// 初始化信号通道
+	if a.pauseSignal == nil {
+		a.pauseSignal = make(chan bool, 1)
+	}
+	if a.resumeSignal == nil {
+		a.resumeSignal = make(chan bool, 1)
+	}
+	a.processingMu.Unlock()
+
+	// 确保在函数结束时清理
+	defer func() {
+		a.processingMu.Lock()
+		if a.processingCancel != nil {
+			a.processingCancel = nil
+		}
+		a.processingState = ProcessingStateIdle
+		a.currentBatch = nil
+		a.processedInBatch = 0
+		a.processingMu.Unlock()
+		cancel()
+	}()
+
+	// 获取实际使用的OCR模型名称
 	aiConfig := a.configManager.GetAIConfig()
-	historyRecord, err := a.historyManager.CreateRecord(doc.FilePath, len(pageNumbers), aiConfig.Model)
+	actualOCRModel := aiConfig.OCRModel
+	if actualOCRModel == "" {
+		actualOCRModel = aiConfig.Model
+	}
+
+	// 创建历史记录，使用实际的OCR模型名称
+	historyRecord, err := a.historyManager.CreateRecord(doc.FilePath, len(pageNumbers), actualOCRModel)
 	if err != nil {
 		log.Printf("创建历史记录失败: %v", err)
 	}
@@ -432,8 +564,20 @@ func (a *App) processPagesBatch(pageNumbers []int, forceReprocess bool) {
 		Status:    "开始处理",
 	})
 
-	// 使用并发处理
-	processed := a.processPagesConcurrently(pageNumbers, historyRecord, doc, forceReprocess)
+	// 使用并发处理（传入可取消的上下文）
+	processed := a.processPagesConcurrently(processingCtx, pageNumbers, historyRecord, doc, forceReprocess)
+
+	// 检查上下文是否被取消
+	select {
+	case <-processingCtx.Done():
+		log.Printf("批量处理被取消")
+		if historyRecord != nil {
+			a.historyManager.UpdateRecordStatus(historyRecord.ID, history.StatusCancelled, "处理被用户取消")
+		}
+		return
+	default:
+		// 正常完成
+	}
 
 	// 更新历史记录状态
 	if historyRecord != nil {
@@ -448,7 +592,7 @@ func (a *App) processPagesBatch(pageNumbers []int, forceReprocess bool) {
 }
 
 // processSinglePage 处理单个页面
-func (a *App) processSinglePage(pageNum int, historyRecord *history.HistoryRecord) error {
+func (a *App) processSinglePage(ctx context.Context, pageNum int, historyRecord *history.HistoryRecord) error {
 	a.mu.RLock()
 	doc := a.currentDoc
 	a.mu.RUnlock()
@@ -465,9 +609,16 @@ func (a *App) processSinglePage(pageNum int, historyRecord *history.HistoryRecor
 		return fmt.Errorf("渲染页面失败: %w", err)
 	}
 
+	// 检查是否被取消
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// 使用AI识别文字（带重试机制）
 	log.Printf("开始OCR识别页面 %d", pageNum)
-	result, err := a.ocrClient.RecognizeImage(context.Background(), imagePath)
+	result, err := a.ocrClient.RecognizeImage(ctx, imagePath)
 	if err != nil {
 		log.Printf("页面 %d OCR识别失败: %v", pageNum, err)
 		return fmt.Errorf("OCR识别失败: %w", err)
@@ -957,7 +1108,7 @@ func (a *App) ExtractNativeText(pageNumber int) (string, error) {
 }
 
 // processPagesConcurrently 并发处理页面
-func (a *App) processPagesConcurrently(pageNumbers []int, historyRecord *history.HistoryRecord, doc *pdf.PDFDocument, forceReprocess bool) int {
+func (a *App) processPagesConcurrently(ctx context.Context, pageNumbers []int, historyRecord *history.HistoryRecord, doc *pdf.PDFDocument, forceReprocess bool) int {
 	const maxConcurrency = 3 // 限制并发数以避免API限制
 
 	// 创建工作通道
@@ -977,8 +1128,57 @@ func (a *App) processPagesConcurrently(pageNumbers []int, historyRecord *history
 		go func() {
 			defer wg.Done()
 			for pageNum := range pagesChan {
-				result := a.processPageWithResult(pageNum, historyRecord, doc, forceReprocess)
-				resultsChan <- result
+				// 检查暂停/取消状态
+				for {
+					a.processingMu.Lock()
+					state := a.processingState
+					a.processingMu.Unlock()
+
+					if state == ProcessingStateCancelling {
+						log.Printf("工作协程检测到取消信号，停止处理")
+						return
+					}
+
+					if state == ProcessingStatePaused {
+						log.Printf("工作协程检测到暂停信号，等待继续")
+						// 等待继续信号或取消信号
+						select {
+						case <-ctx.Done():
+							log.Printf("工作协程检测到上下文取消")
+							return
+						case <-a.resumeSignal:
+							log.Printf("工作协程收到继续信号")
+							break
+						case <-a.pauseSignal:
+							// 可能收到多个暂停信号，忽略
+							continue
+						}
+					} else {
+						break
+					}
+				}
+
+				// 检查是否被取消
+				select {
+				case <-ctx.Done():
+					log.Printf("工作协程检测到上下文取消，停止处理")
+					return
+				default:
+				}
+
+				result := a.processPageWithResult(ctx, pageNum, historyRecord, doc, forceReprocess)
+
+				// 更新已处理计数
+				a.processingMu.Lock()
+				a.processedInBatch++
+				a.processingMu.Unlock()
+
+				// 再次检查是否被取消
+				select {
+				case <-ctx.Done():
+					return
+				case resultsChan <- result:
+				}
 			}
 		}()
 	}
@@ -998,7 +1198,14 @@ func (a *App) processPagesConcurrently(pageNumbers []int, historyRecord *history
 
 		if result.Error != nil {
 			log.Printf("处理第%d页失败: %v", result.PageNumber, result.Error)
-			runtime.EventsEmit(a.ctx, "processing-error", fmt.Sprintf("处理第%d页失败: %v", result.PageNumber, result.Error))
+			// 检查是否是取消导致的错误
+			if result.Error == context.Canceled || strings.Contains(result.Error.Error(), "context canceled") {
+				log.Printf("页面 %d 处理被取消", result.PageNumber)
+				// 取消导致的错误不发送 processing-error 事件
+			} else {
+				// 只有真正的错误才发送 processing-error 事件
+				runtime.EventsEmit(a.ctx, "processing-error", fmt.Sprintf("处理第%d页失败: %v", result.PageNumber, result.Error))
+			}
 		}
 
 		runtime.EventsEmit(a.ctx, "processing-progress", ProgressUpdate{
@@ -1020,7 +1227,7 @@ type ProcessResult struct {
 }
 
 // processPageWithResult 处理页面并返回结果
-func (a *App) processPageWithResult(pageNum int, historyRecord *history.HistoryRecord, doc *pdf.PDFDocument, forceReprocess bool) ProcessResult {
+func (a *App) processPageWithResult(ctx context.Context, pageNum int, historyRecord *history.HistoryRecord, doc *pdf.PDFDocument, forceReprocess bool) ProcessResult {
 	startTime := time.Now()
 
 	// 检查缓存（除非强制重新处理）
@@ -1042,12 +1249,12 @@ func (a *App) processPageWithResult(pageNum int, historyRecord *history.HistoryR
 				}
 
 				page := &history.HistoryPage{
-					HistoryID:      historyRecord.ID,
-					PageNumber:     pageNum,
-					OriginalText:   originalText,
-					OCRText:        cached.OCRText,
+					HistoryID:       historyRecord.ID,
+					PageNumber:      pageNum,
+					OriginalText:    originalText,
+					OCRText:         cached.OCRText,
 					AIProcessedText: cached.AIText,
-					ProcessingTime: time.Since(startTime).Seconds(),
+					ProcessingTime:  time.Since(startTime).Seconds(),
 				}
 
 				log.Printf("保存缓存页面到历史记录: 页面%d, OCR长度=%d, AI长度=%d",
@@ -1068,8 +1275,19 @@ func (a *App) processPageWithResult(pageNum int, historyRecord *history.HistoryR
 		}
 	}
 
+	// 检查是否被取消
+	select {
+	case <-ctx.Done():
+		return ProcessResult{
+			PageNumber: pageNum,
+			Status:     "处理被取消",
+			Error:      ctx.Err(),
+		}
+	default:
+	}
+
 	// 处理页面
-	err := a.processSinglePage(pageNum, historyRecord)
+	err := a.processSinglePage(ctx, pageNum, historyRecord)
 	status := "处理完成"
 	if err != nil {
 		status = "处理失败"

@@ -6,7 +6,7 @@ import HistoryPanel from './components/HistoryPanel.vue'
 import ProgressPanel from './components/ProgressPanel.vue'
 import ErrorHandler from './components/ErrorHandler.vue'
 import TextEditor from './components/TextEditor.vue'
-import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion, CheckSystemDependencies, GetInstallInstructions } from '../wailsjs/go/main/App'
+import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion, CheckSystemDependencies, GetInstallInstructions, CancelProcessing } from '../wailsjs/go/main/App'
 import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime'
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from 'docx'
 
@@ -40,6 +40,7 @@ const progress = ref({
   currentPage: 0,
   status: ''
 })
+const processingState = ref(0) // 0: idle, 1: running, 2: paused, 3: cancelling
 const showProcessConfirmDialog = ref(false)
 const processConfirmData = ref<any>(null)
 
@@ -141,10 +142,12 @@ onMounted(async () => {
   EventsOn('processing-progress', (data: any) => {
     progress.value = data
     processing.value = true
+    processingState.value = 1 // running
   })
 
   EventsOn('processing-complete', async (data: any) => {
     processing.value = false
+    processingState.value = 0 // idle
     console.log('处理完成:', data)
 
     // 强制刷新文档数据，但保持当前页面状态
@@ -197,8 +200,47 @@ onMounted(async () => {
     console.log('AI处理完成:', data)
   })
 
+  EventsOn('processing-paused', (data: any) => {
+    processingState.value = 2 // paused
+    console.log('处理已暂停:', data)
+    window.dispatchEvent(new CustomEvent('show-info', {
+      detail: data.message || '批量处理已暂停'
+    }))
+  })
+
+  EventsOn('processing-resumed', (data: any) => {
+    processingState.value = 1 // running
+    console.log('处理已继续:', data)
+    window.dispatchEvent(new CustomEvent('show-success', {
+      detail: data.message || '批量处理已继续'
+    }))
+  })
+
+  EventsOn('processing-cancelled', (data: any) => {
+    console.log('处理已取消:', data)
+    // 前端已经在handleCancelProcessing中处理了flash提示和状态清理
+    // 这里只记录日志即可
+  })
+
   // 监听历史记录删除事件
   window.addEventListener('history-record-deleted', handleHistoryRecordDeleted)
+
+  // 监听自定义消息事件
+  window.addEventListener('show-error', (event: any) => {
+    window.dispatchEvent(new CustomEvent('error', { detail: event.detail }))
+  })
+
+  window.addEventListener('show-warning', (event: any) => {
+    window.dispatchEvent(new CustomEvent('warning', { detail: event.detail }))
+  })
+
+  window.addEventListener('show-info', (event: any) => {
+    window.dispatchEvent(new CustomEvent('info', { detail: event.detail }))
+  })
+
+  window.addEventListener('show-success', (event: any) => {
+    window.dispatchEvent(new CustomEvent('success', { detail: event.detail }))
+  })
 })
 
 // 监听导出格式变化，实时保存
@@ -320,6 +362,57 @@ const confirmProcessForce = () => {
 const cancelProcess = () => {
   showProcessConfirmDialog.value = false
   processConfirmData.value = null
+}
+
+// 暂停处理
+const handlePauseProcessing = () => {
+  processingState.value = 2 // paused
+}
+
+// 继续处理
+const handleResumeProcessing = () => {
+  processingState.value = 1 // running
+}
+
+// 取消处理
+const handleCancelProcessing = async () => {
+  try {
+    processingState.value = 3 // cancelling
+
+    // 调用后端取消方法
+    await CancelProcessing()
+
+    // 显示取消提示
+    window.dispatchEvent(new CustomEvent('show-warning', {
+      detail: '批量处理已取消'
+    }))
+
+    // 稍微延迟清理状态，让flash提示有时间显示
+    setTimeout(() => {
+      processing.value = false
+      processingState.value = 0 // idle
+      progress.value = {
+        total: 0,
+        processed: 0,
+        currentPage: 0,
+        status: ''
+      }
+    }, 100) // 100ms延迟，足够显示flash提示
+  } catch (error) {
+    console.error('取消处理失败:', error)
+    // 如果后端调用失败，也要清理前端状态
+    processing.value = false
+    processingState.value = 0 // idle
+    progress.value = {
+      total: 0,
+      processed: 0,
+      currentPage: 0,
+      status: ''
+    }
+    window.dispatchEvent(new CustomEvent('show-error', {
+      detail: '取消处理失败'
+    }))
+  }
 }
 
 // 格式化页面列表显示
@@ -1259,7 +1352,14 @@ const generateTextContent = (text: string) => {
     </div>
 
     <!-- 进度面板 -->
-    <ProgressPanel v-if="processing" :progress="progress" />
+    <ProgressPanel
+      v-if="processing"
+      :progress="progress"
+      :processing-state="processingState"
+      @pause="handlePauseProcessing"
+      @resume="handleResumeProcessing"
+      @cancel="handleCancelProcessing"
+    />
 
     <!-- 错误处理器 -->
     <ErrorHandler />

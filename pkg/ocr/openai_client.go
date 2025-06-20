@@ -1,18 +1,22 @@
 package ocr
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/sashabaranov/go-openai"
 	"pdf-ocr-ai/pkg/config"
 	"pdf-ocr-ai/pkg/ratelimiter"
+
+	"github.com/sashabaranov/go-openai"
 )
 
 // OpenAIClient OpenAI客户端
@@ -37,7 +41,7 @@ func NewOpenAIClient(cfg config.AIConfig) *OpenAIClient {
 	}
 
 	client := openai.NewClientWithConfig(clientConfig)
-	
+
 	// 创建频率限制器
 	rateLimiter := ratelimiter.NewRateLimiter(cfg.RequestInterval, cfg.BurstLimit)
 
@@ -125,7 +129,8 @@ func (c *OpenAIClient) recognizeWithVision(ctx context.Context, base64Image stri
 1. 保持原始排版格式和换行
 2. 如果包含表格，请用Markdown格式输出
 3. 直接返回识别的文字内容，不要使用代码块格式，不要添加任何解释或说明
-4. 如果无法识别任何文字，返回空字符串`,
+4. 不要在返回内容中添加 OCR Start 和 OCR End 标记
+5. 如果无法识别任何文字，返回空字符串`,
 			},
 			{
 				Role: openai.ChatMessageRoleUser,
@@ -153,7 +158,7 @@ func (c *OpenAIClient) recognizeWithVision(ctx context.Context, base64Image stri
 	retryConfig := c.getRetryConfig()
 	err := retryWithBackoff(ctx, retryConfig, func() error {
 		var apiErr error
-		resp, apiErr = c.client.CreateChatCompletion(ctx, req)
+		resp, apiErr = c.createChatCompletionWithFloatTimestamp(ctx, req)
 		return apiErr
 	})
 
@@ -195,52 +200,52 @@ func (c *OpenAIClient) recognizeWithText(ctx context.Context, imagePath string, 
 func (c *OpenAIClient) GetSupportedModels() []ModelInfo {
 	return []ModelInfo{
 		{
-			ID:          "gpt-4-vision-preview",
-			Name:        "GPT-4 Vision Preview",
-			Description: "GPT-4的视觉预览版本，支持图片和文本处理",
+			ID:             "gpt-4-vision-preview",
+			Name:           "GPT-4 Vision Preview",
+			Description:    "GPT-4的视觉预览版本，支持图片和文本处理",
 			SupportsVision: true,
-			MaxTokens:   4096,
-			Recommended: true,
+			MaxTokens:      4096,
+			Recommended:    true,
 		},
 		{
-			ID:          "gpt-4-turbo",
-			Name:        "GPT-4 Turbo",
-			Description: "GPT-4的高速版本，支持视觉功能",
+			ID:             "gpt-4-turbo",
+			Name:           "GPT-4 Turbo",
+			Description:    "GPT-4的高速版本，支持视觉功能",
 			SupportsVision: true,
-			MaxTokens:   4096,
-			Recommended: true,
+			MaxTokens:      4096,
+			Recommended:    true,
 		},
 		{
-			ID:          "gpt-4o",
-			Name:        "GPT-4o",
-			Description: "GPT-4的优化版本，多模态支持",
+			ID:             "gpt-4o",
+			Name:           "GPT-4o",
+			Description:    "GPT-4的优化版本，多模态支持",
 			SupportsVision: true,
-			MaxTokens:   4096,
-			Recommended: true,
+			MaxTokens:      4096,
+			Recommended:    true,
 		},
 		{
-			ID:          "gpt-4o-mini",
-			Name:        "GPT-4o Mini",
-			Description: "GPT-4o的轻量版本，成本更低",
+			ID:             "gpt-4o-mini",
+			Name:           "GPT-4o Mini",
+			Description:    "GPT-4o的轻量版本，成本更低",
 			SupportsVision: true,
-			MaxTokens:   4096,
-			Recommended: false,
+			MaxTokens:      4096,
+			Recommended:    false,
 		},
 		{
-			ID:          "gpt-4",
-			Name:        "GPT-4",
-			Description: "标准GPT-4模型，仅支持文本",
+			ID:             "gpt-4",
+			Name:           "GPT-4",
+			Description:    "标准GPT-4模型，仅支持文本",
 			SupportsVision: false,
-			MaxTokens:   4096,
-			Recommended: false,
+			MaxTokens:      4096,
+			Recommended:    false,
 		},
 		{
-			ID:          "gpt-3.5-turbo",
-			Name:        "GPT-3.5 Turbo",
-			Description: "GPT-3.5的高速版本，仅支持文本",
+			ID:             "gpt-3.5-turbo",
+			Name:           "GPT-3.5 Turbo",
+			Description:    "GPT-3.5的高速版本，仅支持文本",
 			SupportsVision: false,
-			MaxTokens:   4096,
-			Recommended: false,
+			MaxTokens:      4096,
+			Recommended:    false,
 		},
 	}
 }
@@ -253,6 +258,119 @@ type ModelInfo struct {
 	SupportsVision bool   `json:"supports_vision"`
 	MaxTokens      int    `json:"max_tokens"`
 	Recommended    bool   `json:"recommended"`
+}
+
+// CustomChatCompletionResponse 自定义的聊天完成响应结构体，支持浮点数时间戳
+type CustomChatCompletionResponse struct {
+	ID                string                        `json:"id"`
+	Object            string                        `json:"object"`
+	Created           float64                       `json:"created"` // 使用float64支持浮点数时间戳
+	Model             string                        `json:"model"`
+	Choices           []openai.ChatCompletionChoice `json:"choices"`
+	Usage             openai.Usage                  `json:"usage"`
+	SystemFingerprint string                        `json:"system_fingerprint,omitempty"`
+}
+
+// ToStandardResponse 转换为标准的ChatCompletionResponse
+func (c *CustomChatCompletionResponse) ToStandardResponse() openai.ChatCompletionResponse {
+	return openai.ChatCompletionResponse{
+		ID:                c.ID,
+		Object:            c.Object,
+		Created:           int64(c.Created), // 转换为int64
+		Model:             c.Model,
+		Choices:           c.Choices,
+		Usage:             c.Usage,
+		SystemFingerprint: c.SystemFingerprint,
+	}
+}
+
+// createChatCompletionWithFloatTimestamp 创建聊天完成请求，支持浮点数时间戳
+func (c *OpenAIClient) createChatCompletionWithFloatTimestamp(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+	// 首先尝试使用标准的API调用
+	resp, err := c.client.CreateChatCompletion(ctx, req)
+	if err == nil {
+		return resp, nil
+	}
+
+	// 如果错误包含时间戳解析问题，使用自定义解析
+	if strings.Contains(err.Error(), "cannot unmarshal number") && strings.Contains(err.Error(), "into Go struct field") && strings.Contains(err.Error(), "created") {
+		log.Printf("检测到时间戳解析错误，使用自定义解析: %v", err)
+		return c.createChatCompletionWithCustomParsing(ctx, req)
+	}
+
+	// 其他错误直接返回
+	return resp, err
+}
+
+// createChatCompletionWithCustomParsing 使用自定义解析创建聊天完成请求
+func (c *OpenAIClient) createChatCompletionWithCustomParsing(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+	// 构建HTTP请求
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return openai.ChatCompletionResponse{}, fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	// 构建完整的URL
+	baseURL := c.config.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+
+	// 确保baseURL不以/结尾，endpoint以/开头
+	endpoint := c.config.ChatEndpoint
+	if endpoint == "" {
+		endpoint = "/chat/completions"
+	}
+	if !strings.HasPrefix(endpoint, "/") {
+		endpoint = "/" + endpoint
+	}
+	if strings.HasSuffix(baseURL, "/") {
+		baseURL = strings.TrimSuffix(baseURL, "/")
+	}
+
+	fullURL := baseURL + endpoint
+
+	// 创建HTTP请求
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return openai.ChatCompletionResponse{}, fmt.Errorf("创建HTTP请求失败: %w", err)
+	}
+
+	// 设置请求头
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+
+	// 创建HTTP客户端
+	httpClient := &http.Client{
+		Timeout: time.Duration(c.config.Timeout) * time.Second,
+	}
+
+	// 执行请求
+	httpResp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return openai.ChatCompletionResponse{}, fmt.Errorf("HTTP请求失败: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	// 读取响应
+	respBody, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return openai.ChatCompletionResponse{}, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	// 检查HTTP状态码
+	if httpResp.StatusCode != 200 {
+		return openai.ChatCompletionResponse{}, fmt.Errorf("API返回错误状态码 %d: %s", httpResp.StatusCode, string(respBody))
+	}
+
+	// 使用自定义结构体解析响应
+	var customResp CustomChatCompletionResponse
+	if err := json.Unmarshal(respBody, &customResp); err != nil {
+		return openai.ChatCompletionResponse{}, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	// 转换为标准响应
+	return customResp.ToStandardResponse(), nil
 }
 
 // RecognizeImageFromReader 从Reader识别图片
@@ -322,7 +440,7 @@ func (c *OpenAIClient) ProcessWithAI(ctx context.Context, text string, prompt st
 	retryConfig := c.getRetryConfig()
 	err := retryWithBackoff(timeoutCtx, retryConfig, func() error {
 		var apiErr error
-		resp, apiErr = c.client.CreateChatCompletion(timeoutCtx, req)
+		resp, apiErr = c.createChatCompletionWithFloatTimestamp(timeoutCtx, req)
 		return apiErr
 	})
 
@@ -340,14 +458,14 @@ func (c *OpenAIClient) ProcessWithAI(ctx context.Context, text string, prompt st
 // UpdateConfig 更新配置
 func (c *OpenAIClient) UpdateConfig(cfg config.AIConfig) {
 	c.config = cfg
-	
+
 	// 更新客户端配置
 	clientConfig := openai.DefaultConfig(cfg.APIKey)
 	if cfg.BaseURL != "" {
 		clientConfig.BaseURL = cfg.BaseURL
 	}
 	c.client = openai.NewClientWithConfig(clientConfig)
-	
+
 	// 更新频率限制器
 	c.rateLimiter.UpdateRate(cfg.RequestInterval, cfg.BurstLimit)
 }
@@ -515,7 +633,7 @@ func cleanOCRResult(text string) string {
 		firstLine := strings.TrimSpace(lines[0])
 		// 如果第一行是常见的语言标识，移除它
 		if firstLine == "text" || firstLine == "markdown" || firstLine == "md" ||
-		   firstLine == "txt" || firstLine == "plain" || len(firstLine) < 10 {
+			firstLine == "txt" || firstLine == "plain" || len(firstLine) < 10 {
 			text = strings.Join(lines[1:], "\n")
 		}
 	}
