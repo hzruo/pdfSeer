@@ -72,7 +72,13 @@ export function ProcessWithAI(arg1:Array<number>,arg2:string):Promise<void>;
 
 export function ProcessWithAIBatch(arg1:Array<number>,arg2:string):Promise<void>;
 
+export function ProcessWithAIBatchContext(arg1:Array<number>,arg2:string,arg3:boolean):Promise<void>;
+
 export function ProcessWithAIBatchForce(arg1:Array<number>,arg2:string):Promise<void>;
+
+export function ProcessWithAIBatchForceContext(arg1:Array<number>,arg2:string,arg3:boolean):Promise<void>;
+
+export function ProcessWithAIContext(arg1:Array<number>,arg2:string,arg3:boolean):Promise<void>;
 
 export function ResumeProcessing():Promise<void>;
 

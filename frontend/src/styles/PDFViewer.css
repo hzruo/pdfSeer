@@ -971,6 +971,69 @@
   gap: 0.5rem;
 }
 
+/* 复选框样式 */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 500;
+  color: #333;
+}
+
+.checkbox-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.checkbox-custom {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.checkbox-input:checked + .checkbox-custom {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-color: #667eea;
+}
+
+.checkbox-input:checked + .checkbox-custom::after {
+  content: '✓';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.checkbox-label:hover .checkbox-custom {
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.context-mode-section {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: rgba(102, 126, 234, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(102, 126, 234, 0.1);
+}
+
+.context-mode-section .form-help {
+  margin-top: 0.5rem;
+  display: block;
+  font-size: 0.85rem;
+  color: #666;
+  line-height: 1.4;
+}
+
 /* AI提示词对话框样式 */
 .modal-overlay {
   position: fixed;
@@ -1113,11 +1176,23 @@
 
 .ai-prompt-modal .modal-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 1rem;
   padding: 1.25rem;
   border-top: 1px solid #e0e0e0;
   background: #f8f9fa;
+}
+
+.ai-prompt-modal .modal-footer .footer-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ai-prompt-modal .modal-footer .footer-right {
+  display: flex;
+  gap: 1rem;
 }
 
 .ai-prompt-modal .modal-footer .btn {
@@ -1189,13 +1264,13 @@
 
 .pages-grid-selector {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
-  max-height: 180px;
+  grid-template-columns: repeat(4, 1fr); /* 增加到4列，让卡片更小 */
+  gap: 0.4rem; /* 减少间距 */
+  max-height: 200px;
   overflow-y: auto;
   padding: 0.75rem;
   border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #f8f9fa;
   margin-bottom: 1rem;
 }
@@ -1205,14 +1280,15 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0.5rem 0.25rem;
+  padding: 0.3rem 0.15rem; /* 减少内边距 */
   border: 2px solid #e0e0e0;
-  border-radius: 6px;
+  border-radius: 4px; /* 减少圆角 */
   background: white;
   cursor: pointer;
   transition: all 0.2s ease;
-  min-height: 55px;
-  height: 55px; /* 更紧凑的高度 */
+  aspect-ratio: 1; /* 保持方形比例 */
+  min-height: 40px; /* 减少最小高度 */
+  height: auto; /* 让高度自适应宽度 */
   position: relative;
   width: 100%; /* 确保占满网格单元 */
   box-sizing: border-box; /* 包含边框和内边距 */
@@ -1264,7 +1340,7 @@
 }
 
 .page-number {
-  font-size: 0.9rem;
+  font-size: 0.8rem; /* 减少字体大小 */
   font-weight: 500;
 }
 
@@ -1314,6 +1390,209 @@
 
 .batch-ai-modal .modal-footer .btn {
   min-width: 120px;
+}
+
+/* 上下文模式复选框样式（footer中的紧凑版本） */
+.context-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.context-checkbox-label:hover {
+  background: rgba(102, 126, 234, 0.05);
+  color: #333;
+}
+
+.context-checkbox-input {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+  height: 0;
+  width: 0;
+}
+
+.context-checkbox-custom {
+  position: relative;
+  height: 16px;
+  width: 16px;
+  background-color: #fff;
+  border: 2px solid #ddd;
+  border-radius: 3px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.context-checkbox-label:hover .context-checkbox-custom {
+  border-color: #667eea;
+}
+
+.context-checkbox-input:checked ~ .context-checkbox-custom {
+  background-color: #667eea;
+  border-color: #667eea;
+}
+
+.context-checkbox-custom:after {
+  content: "";
+  position: absolute;
+  display: none;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.context-checkbox-input:checked ~ .context-checkbox-custom:after {
+  display: block;
+}
+
+.context-checkbox-text {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Switch开关样式 */
+.context-switch-container {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.context-switch-container:hover {
+  background: rgba(102, 126, 234, 0.05);
+}
+
+.context-switch-label {
+  font-size: 0.9rem;
+  color: #555;
+  font-weight: 500;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.context-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.context-switch-input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.context-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: 0.3s;
+  border-radius: 24px;
+}
+
+.context-switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.context-switch-input:checked + .context-switch-slider {
+  background-color: #667eea;
+}
+
+.context-switch-input:focus + .context-switch-slider {
+  box-shadow: 0 0 1px #667eea;
+}
+
+.context-switch-input:checked + .context-switch-slider:before {
+  transform: translateX(20px);
+}
+
+/* 批量AI模态框布局优化 */
+.batch-modal-body {
+  display: flex;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  max-height: 70vh;
+  overflow: hidden;
+}
+
+.batch-pages-section {
+  flex: 0 0 280px; /* 减少宽度，让指令输入更宽 */
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.batch-prompt-section {
+  flex: 1; /* 占用剩余空间 */
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0; /* 允许收缩 */
+}
+
+.batch-prompt-textarea {
+  flex: 1;
+  min-height: 200px;
+  max-height: none; /* 移除最大高度限制 */
+  resize: both; /* 允许水平和垂直调整 */
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 页面选择区域优化 - 已合并到上面的定义中 */
+
+.page-selection-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.page-selection-controls .btn-small {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+/* 批量AI模态框footer布局调整 */
+.batch-ai-modal .modal-footer .footer-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem; /* 减少间距 */
+}
+
+/* 上下文开关容器优化 */
+.context-switch-container {
+  gap: 0.5rem; /* 减少开关和文字间距 */
+  padding: 0.25rem 0.375rem; /* 减少内边距 */
 }
 
 /* 成功按钮样式 */

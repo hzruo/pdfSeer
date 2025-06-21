@@ -12,22 +12,22 @@ import (
 type AIConfig struct {
 	BaseURL         string  `json:"base_url"`
 	APIKey          string  `json:"api_key"`
-	Model           string  `json:"model"`            // 保持向后兼容，默认OCR模型
-	OCRModel        string  `json:"ocr_model"`        // OCR识别专用模型
-	TextModel       string  `json:"text_model"`       // 文本处理专用模型
-	ModelsEndpoint  string  `json:"models_endpoint"`  // 模型列表API端点
-	ChatEndpoint    string  `json:"chat_endpoint"`    // 对话API端点
+	Model           string  `json:"model"`           // 保持向后兼容，默认OCR模型
+	OCRModel        string  `json:"ocr_model"`       // OCR识别专用模型
+	TextModel       string  `json:"text_model"`      // 文本处理专用模型
+	ModelsEndpoint  string  `json:"models_endpoint"` // 模型列表API端点
+	ChatEndpoint    string  `json:"chat_endpoint"`   // 对话API端点
 	Timeout         int     `json:"timeout"`
 	RequestInterval float64 `json:"request_interval"`
 	BurstLimit      int     `json:"burst_limit"`
-	MaxRetries      int     `json:"max_retries"`      // 最大重试次数
-	RetryDelay      int     `json:"retry_delay"`      // 重试延迟（秒）
+	MaxRetries      int     `json:"max_retries"` // 最大重试次数
+	RetryDelay      int     `json:"retry_delay"` // 重试延迟（秒）
 }
 
 // StorageConfig 存储配置
 type StorageConfig struct {
-	CacheTTL        string `json:"cache_ttl"`
-	MaxCacheSize    string `json:"max_cache_size"`
+	CacheTTL         string `json:"cache_ttl"`
+	MaxCacheSize     string `json:"max_cache_size"`
 	HistoryRetention string `json:"history_retention"`
 }
 
@@ -65,7 +65,7 @@ func NewConfigManager() (*ConfigManager, error) {
 	}
 
 	configPath := filepath.Join(configDir, "config.json")
-	
+
 	cm := &ConfigManager{
 		configPath: configPath,
 	}
@@ -95,12 +95,12 @@ func (cm *ConfigManager) Load() error {
 			Timeout:         30,
 			RequestInterval: 1.0,
 			BurstLimit:      3,
-			MaxRetries:      3,  // 默认重试3次
-			RetryDelay:      1,  // 默认延迟1秒
+			MaxRetries:      3, // 默认重试3次
+			RetryDelay:      1, // 默认延迟1秒
 		},
 		Storage: StorageConfig{
-			CacheTTL:        "24h",
-			MaxCacheSize:    "2GB",
+			CacheTTL:         "24h",
+			MaxCacheSize:     "2GB",
 			HistoryRetention: "30d",
 		},
 		UI: UIConfig{
@@ -149,7 +149,7 @@ func (cm *ConfigManager) UpdateAIConfig(config AIConfig) error {
 	cm.mu.Lock()
 	cm.config.AI = config
 	cm.mu.Unlock()
-	
+
 	return cm.Save()
 }
 
@@ -165,6 +165,6 @@ func (cm *ConfigManager) UpdateConfig(config AppConfig) error {
 	cm.mu.Lock()
 	cm.config = config
 	cm.mu.Unlock()
-	
+
 	return cm.Save()
 }

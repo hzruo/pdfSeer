@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
-import { SelectFile, GetPageImage, GetPDFPath, ExtractNativeText, ProcessWithAI } from '../../wailsjs/go/main/App'
+import { SelectFile, GetPageImage, GetPDFPath, ExtractNativeText, ProcessWithAI, ProcessWithAIContext } from '../../wailsjs/go/main/App'
 import { renderMarkdown } from '../utils/markdown'
 
 // Props
@@ -23,7 +23,7 @@ const emit = defineEmits<{
   'process-pages': [pageNumbers: number[], forceReprocess?: boolean]
   'page-rendered': [pageNumber: number]
   'ai-processing-complete': [data: { pages: number[], result: string }]
-  'start-batch-ai-processing': [data: { pages: number[], prompt: string }]
+  'start-batch-ai-processing': [data: { pages: number[], prompt: string, contextMode?: boolean }]
 }>()
 
 // 响应式数据
@@ -44,10 +44,13 @@ const extractingNativeText = ref(false) // 是否正在提取原生文本
 const showAIPromptDialog = ref(false) // 是否显示单页AI提示词对话框
 const showBatchAIDialog = ref(false) // 是否显示批量AI处理对话框
 const processingAI = ref(false) // 是否正在进行AI处理
+const batchAIProcessing = ref(false) // 是否正在进行批量AI处理
 const aiPrompt = ref('') // 单页AI处理提示词
 const batchAIPrompt = ref('') // 批量AI处理提示词
 const aiProcessingMessage = ref('正在连接AI服务...') // AI处理状态消息
 const aiBatchPages = ref<number[]>([]) // 批量处理的页面列表
+const aiContextMode = ref(false) // 单页AI处理上下文模式
+const batchAIContextMode = ref(false) // 批量AI处理上下文模式
 
 // AI提示词预设
 const promptPresets = [
@@ -568,7 +571,7 @@ const startAIProcessing = async () => {
     // 只处理当前页面（单页模式）
     const pagesToProcess = [currentPage.value]
 
-    console.log(`开始AI处理第${currentPage.value}页，提示词: ${promptText}`)
+    console.log(`开始AI处理第${currentPage.value}页，提示词: ${promptText}，上下文模式: ${aiContextMode.value}`)
 
     // 创建一个Promise来等待AI处理完成事件
     const aiProcessingPromise = new Promise((resolve, reject) => {
@@ -639,8 +642,12 @@ const startAIProcessing = async () => {
       }
     })
 
-    // 调用后端API进行AI处理
-    ProcessWithAI(pagesToProcess, promptText)
+    // 根据上下文模式调用不同的后端API
+    if (aiContextMode.value) {
+      ProcessWithAIContext(pagesToProcess, promptText, true)
+    } else {
+      ProcessWithAI(pagesToProcess, promptText)
+    }
 
     // 等待AI处理完成事件
     await aiProcessingPromise
@@ -711,6 +718,9 @@ const startBatchAIProcessing = async () => {
     return
   }
 
+  // 设置批量AI处理状态
+  batchAIProcessing.value = true
+
   // 关闭批量AI对话框，显示进度面板
   const promptText = batchAIPrompt.value
   closeBatchAIDialog()
@@ -718,9 +728,12 @@ const startBatchAIProcessing = async () => {
   // 触发批量AI处理事件
   emit('start-batch-ai-processing', {
     pages: processablePages,
-    prompt: promptText
+    prompt: promptText,
+    contextMode: batchAIContextMode.value
   })
 }
+
+// 上下文模式现在使用鼠标悬停提示，不需要额外的方法
 
 // 监听AI处理事件
 onMounted(() => {
@@ -754,6 +767,8 @@ onMounted(() => {
     // 监听AI处理完成事件（全局监听，用于其他地方触发的AI处理）
     runtime.EventsOn('ai-processing-complete', (data: any) => {
       console.log('AI处理完成（全局监听）:', data)
+      // 重置批量AI处理状态
+      batchAIProcessing.value = false
       // 这里不需要处理，因为startAIProcessing中已经有专门的处理逻辑
     })
 
@@ -761,6 +776,7 @@ onMounted(() => {
     runtime.EventsOn('ai-processing-error', (data: any) => {
       console.error('AI处理错误:', data)
       processingAI.value = false
+      batchAIProcessing.value = false
       alert(`AI处理失败: ${data.error || '未知错误'}`)
     })
   }
@@ -992,10 +1008,10 @@ onMounted(() => {
                       v-if="!processingAI && (currentPageData.ocr_text || currentPageData.text)"
                       @click="openBatchAIDialog()"
                       class="btn btn-small btn-warning"
-                      :disabled="props.processing"
+                      :disabled="props.processing || batchAIProcessing"
                       title="批量AI处理多个页面"
                     >
-                      批量AI处理
+                      {{ batchAIProcessing ? '批量处理中...' : '批量AI处理' }}
                     </button>
                     <button
                       v-if="currentPageData.ai_text"
@@ -1212,16 +1228,32 @@ onMounted(() => {
           </div>
         </div>
         <div class="modal-footer">
-          <button @click="closeAIPromptDialog" class="btn btn-secondary">
-            取消
-          </button>
-          <button
-            @click="startAIProcessing"
-            class="btn btn-primary"
-            :disabled="!aiPrompt.trim() || processingAI"
-          >
-            {{ processingAI ? '处理中...' : '开始处理' }}
-          </button>
+          <div class="footer-left">
+            <!-- 上下文模式开关 -->
+            <div class="context-switch-container" title="开启后，AI处理时会包含当前页面前后页面的内容作为上下文">
+              <label class="context-switch">
+                <input
+                  type="checkbox"
+                  v-model="aiContextMode"
+                  class="context-switch-input"
+                />
+                <span class="context-switch-slider"></span>
+              </label>
+              <span class="context-switch-label">上下文模式</span>
+            </div>
+          </div>
+          <div class="footer-right">
+            <button @click="closeAIPromptDialog" class="btn btn-secondary">
+              取消
+            </button>
+            <button
+              @click="startAIProcessing"
+              class="btn btn-primary"
+              :disabled="!aiPrompt.trim() || processingAI"
+            >
+              {{ processingAI ? '处理中...' : '开始处理' }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1233,7 +1265,7 @@ onMounted(() => {
           <h3>批量AI处理设置</h3>
           <button @click="closeBatchAIDialog" class="close-btn">&times;</button>
         </div>
-        <div class="modal-body">
+        <div class="modal-body batch-modal-body">
           <!-- 页面选择 -->
           <div class="batch-pages-section">
             <label class="section-label">选择页面：</label>
@@ -1285,13 +1317,13 @@ onMounted(() => {
           </div>
 
           <!-- 提示词输入 -->
-          <div class="prompt-section">
+          <div class="prompt-section batch-prompt-section">
             <label for="batch-ai-prompt">处理指令：</label>
             <textarea
               id="batch-ai-prompt"
               v-model="batchAIPrompt"
               placeholder="请输入AI处理指令，例如：&#10;- 纠正OCR识别错误&#10;- 总结文本内容&#10;- 翻译为英文&#10;- 格式化为Markdown&#10;- 提取关键信息"
-              class="prompt-textarea"
+              class="prompt-textarea batch-prompt-textarea"
               rows="6"
             ></textarea>
             <div class="prompt-presets">
@@ -1320,6 +1352,18 @@ onMounted(() => {
             >
               📤 导出结果
             </button>
+            <!-- 上下文模式开关 -->
+            <div class="context-switch-container" title="开启后，AI处理时会包含每个页面前后页面的内容作为上下文">
+              <label class="context-switch">
+                <input
+                  type="checkbox"
+                  v-model="batchAIContextMode"
+                  class="context-switch-input"
+                />
+                <span class="context-switch-slider"></span>
+              </label>
+              <span class="context-switch-label">上下文模式</span>
+            </div>
           </div>
           <div class="footer-right">
             <button @click="closeBatchAIDialog" class="btn btn-secondary">

@@ -6,7 +6,7 @@ import HistoryPanel from './components/HistoryPanel.vue'
 import ProgressPanel from './components/ProgressPanel.vue'
 import ErrorHandler from './components/ErrorHandler.vue'
 import TextEditor from './components/TextEditor.vue'
-import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion, CheckSystemDependencies, GetInstallInstructions, CancelProcessing, ProcessWithAIBatch, ProcessWithAIBatchForce, CheckAIProcessedPages } from '../wailsjs/go/main/App'
+import { LoadDocument, GetCurrentDocument, ProcessPages, ProcessPagesForce, CheckProcessedPages, GetConfig, GetSupportedFormats, ExportProcessingResults, SaveFileWithDialog, SaveBinaryFileWithDialog, GetAppVersion, CheckSystemDependencies, GetInstallInstructions, CancelProcessing, ProcessWithAIBatch, ProcessWithAIBatchForce, ProcessWithAIBatchContext, ProcessWithAIBatchForceContext, CheckAIProcessedPages } from '../wailsjs/go/main/App'
 import { EventsOn, BrowserOpenURL } from '../wailsjs/runtime/runtime'
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from 'docx'
 import { renderMarkdown } from './utils/markdown'
@@ -497,7 +497,7 @@ const confirmAIProcessWithCache = async () => {
     }
 
     // 有未处理的页面，开始处理
-    await startBatchAIProcessing(unprocessedPages, aiConfirmData.value.prompt, false)
+    await startBatchAIProcessing(unprocessedPages, aiConfirmData.value.prompt, false, aiConfirmData.value.contextMode)
 
     // 关闭AI确认弹窗和批量处理弹窗
     showAIConfirmDialog.value = false
@@ -512,7 +512,7 @@ const confirmAIProcessWithCache = async () => {
 const confirmAIProcessForce = async () => {
   if (aiConfirmData.value) {
     // 重新处理所有页面
-    await startBatchAIProcessing(aiConfirmData.value.allPages, aiConfirmData.value.prompt, true)
+    await startBatchAIProcessing(aiConfirmData.value.allPages, aiConfirmData.value.prompt, true, aiConfirmData.value.contextMode)
 
     // 关闭AI确认弹窗和批量处理弹窗
     showAIConfirmDialog.value = false
@@ -697,7 +697,7 @@ const handleAIProcessingComplete = async (data: { pages: number[], result: strin
 }
 
 // 处理批量AI处理请求
-const handleStartBatchAIProcessing = async (data: { pages: number[], prompt: string }) => {
+const handleStartBatchAIProcessing = async (data: { pages: number[], prompt: string, contextMode?: boolean }) => {
   console.log('开始批量AI处理:', data)
 
   try {
@@ -716,11 +716,12 @@ const handleStartBatchAIProcessing = async (data: { pages: number[], prompt: str
         processedPages: processedPages,
         unprocessedPages: unprocessedPages,
         allPages: data.pages,
-        prompt: data.prompt
+        prompt: data.prompt,
+        contextMode: data.contextMode || false
       }
     } else {
       // 没有已处理的页面，直接开始处理
-      await startBatchAIProcessing(data.pages, data.prompt, false)
+      await startBatchAIProcessing(data.pages, data.prompt, false, data.contextMode)
     }
 
   } catch (error) {
@@ -732,7 +733,7 @@ const handleStartBatchAIProcessing = async (data: { pages: number[], prompt: str
 }
 
 // 实际开始批量AI处理
-const startBatchAIProcessing = async (pages: number[], prompt: string, forceReprocess: boolean) => {
+const startBatchAIProcessing = async (pages: number[], prompt: string, forceReprocess: boolean, contextMode?: boolean) => {
   try {
     // 显示进度面板
     processing.value = true
@@ -746,9 +747,17 @@ const startBatchAIProcessing = async (pages: number[], prompt: string, forceRepr
 
     // 调用后端批量AI处理方法
     if (forceReprocess) {
-      await ProcessWithAIBatchForce(pages, prompt)
+      if (contextMode) {
+        await ProcessWithAIBatchForceContext(pages, prompt, contextMode)
+      } else {
+        await ProcessWithAIBatchForce(pages, prompt)
+      }
     } else {
-      await ProcessWithAIBatch(pages, prompt)
+      if (contextMode) {
+        await ProcessWithAIBatchContext(pages, prompt, contextMode)
+      } else {
+        await ProcessWithAIBatch(pages, prompt)
+      }
     }
 
   } catch (error) {
@@ -2111,7 +2120,8 @@ const generateTextContent = (text: string) => {
               <div class="option-item cache">
                 <div class="option-icon">⚡</div>
                 <div class="option-content">
-                  <strong>导出结果</strong>
+                  <strong v-if="aiConfirmData.processedPages.length === aiConfirmData.totalPages">导出结果</strong>
+                  <strong v-else>使用缓存</strong>
                   <span v-if="aiConfirmData.processedPages.length === aiConfirmData.totalPages">所有页面都已处理，可直接导出AI处理结果</span>
                   <span v-else>只处理未处理的页面，已处理页面使用缓存结果（推荐）</span>
                 </div>

@@ -1691,6 +1691,8 @@ const close = () => {
   gap: 1rem;
 }
 
+
+
 .btn {
   padding: 0.75rem 1.5rem;
   border: none;

@@ -814,13 +814,18 @@ func (a *App) savePageToCache(pageNum int, ocrText, aiText string) error {
 	return a.cacheManager.SavePage(pageCache)
 }
 
-// ProcessWithAI 使用AI处理文本
+// ProcessWithAI 使用AI处理文本（不支持上下文模式，保持向后兼容）
 func (a *App) ProcessWithAI(pageNumbers []int, prompt string) {
-	go a.processWithAI(pageNumbers, prompt)
+	go a.processWithAI(pageNumbers, prompt, false)
+}
+
+// ProcessWithAIContext 使用AI处理文本（支持上下文模式）
+func (a *App) ProcessWithAIContext(pageNumbers []int, prompt string, contextMode bool) {
+	go a.processWithAI(pageNumbers, prompt, contextMode)
 }
 
 // processWithAI AI处理文本
-func (a *App) processWithAI(pageNumbers []int, prompt string) {
+func (a *App) processWithAI(pageNumbers []int, prompt string, contextMode bool) {
 	a.mu.RLock()
 	doc := a.currentDoc
 	a.mu.RUnlock()
@@ -835,11 +840,15 @@ func (a *App) processWithAI(pageNumbers []int, prompt string) {
 		return
 	}
 
-	// 获取实际使用的AI模型名称
+	// 获取实际使用的AI文本处理模型名称
 	aiConfig := a.configManager.GetAIConfig()
-	actualAIModel := aiConfig.Model
+	actualAIModel := aiConfig.TextModel
 	if actualAIModel == "" {
-		actualAIModel = "未知模型"
+		// 如果没有设置文本处理模型，回退到通用模型
+		actualAIModel = aiConfig.Model
+		if actualAIModel == "" {
+			actualAIModel = "未知模型"
+		}
 	}
 
 	// 创建历史记录，使用实际的AI模型名称，添加AI前缀标识任务类型
@@ -848,7 +857,36 @@ func (a *App) processWithAI(pageNumbers []int, prompt string) {
 		log.Printf("创建AI处理历史记录失败: %v", err)
 	}
 
-	// 收集文本
+	// 根据上下文模式选择处理方式
+	if contextMode && len(pageNumbers) == 1 {
+		// 上下文模式且单页处理：使用新的单页AI处理逻辑
+		pageNum := pageNumbers[0]
+		result := a.processPageAI(context.Background(), pageNum, prompt, doc, false, contextMode, historyRecord)
+
+		if result.Error != nil {
+			// 更新历史记录状态为失败
+			if historyRecord != nil {
+				a.historyManager.UpdateRecordStatus(historyRecord.ID, history.StatusFailed, fmt.Sprintf("AI处理失败: %v", result.Error))
+			}
+			runtime.EventsEmit(a.ctx, "ai-processing-error", fmt.Sprintf("AI处理失败: %v", result.Error))
+			return
+		}
+
+		// 更新历史记录状态为完成
+		if historyRecord != nil {
+			a.historyManager.UpdateRecordStatus(historyRecord.ID, history.StatusCompleted, "")
+		}
+
+		// 发送结果
+		runtime.EventsEmit(a.ctx, "ai-processing-complete", map[string]interface{}{
+			"pages":  pageNumbers,
+			"prompt": prompt,
+			"result": result.Result,
+		})
+		return
+	}
+
+	// 传统模式：收集所有页面文本合并处理
 	var textBuilder strings.Builder
 	for _, pageNum := range pageNumbers {
 		if pageNum < 1 || pageNum > len(doc.Pages) {
@@ -964,16 +1002,26 @@ func (a *App) CheckAIProcessedPages(pageNumbers []int) map[string]interface{} {
 
 // ProcessWithAIBatch 批量AI处理（每页单独处理）
 func (a *App) ProcessWithAIBatch(pageNumbers []int, prompt string) {
-	go a.processWithAIBatch(pageNumbers, prompt, false)
+	go a.processWithAIBatch(pageNumbers, prompt, false, false)
 }
 
 // ProcessWithAIBatchForce 强制批量AI处理（忽略缓存）
 func (a *App) ProcessWithAIBatchForce(pageNumbers []int, prompt string) {
-	go a.processWithAIBatch(pageNumbers, prompt, true)
+	go a.processWithAIBatch(pageNumbers, prompt, true, false)
+}
+
+// ProcessWithAIBatchContext 批量AI处理（支持上下文模式）
+func (a *App) ProcessWithAIBatchContext(pageNumbers []int, prompt string, contextMode bool) {
+	go a.processWithAIBatch(pageNumbers, prompt, false, contextMode)
+}
+
+// ProcessWithAIBatchForceContext 强制批量AI处理（支持上下文模式）
+func (a *App) ProcessWithAIBatchForceContext(pageNumbers []int, prompt string, contextMode bool) {
+	go a.processWithAIBatch(pageNumbers, prompt, true, contextMode)
 }
 
 // processWithAIBatch 批量AI处理实现
-func (a *App) processWithAIBatch(pageNumbers []int, prompt string, forceReprocess bool) {
+func (a *App) processWithAIBatch(pageNumbers []int, prompt string, forceReprocess bool, contextMode bool) {
 	a.mu.RLock()
 	doc := a.currentDoc
 	a.mu.RUnlock()
@@ -1004,11 +1052,15 @@ func (a *App) processWithAIBatch(pageNumbers []int, prompt string, forceReproces
 		return
 	}
 
-	// 获取实际使用的AI模型名称
+	// 获取实际使用的AI文本处理模型名称
 	aiConfig := a.configManager.GetAIConfig()
-	actualAIModel := aiConfig.Model
+	actualAIModel := aiConfig.TextModel
 	if actualAIModel == "" {
-		actualAIModel = "未知模型"
+		// 如果没有设置文本处理模型，回退到通用模型
+		actualAIModel = aiConfig.Model
+		if actualAIModel == "" {
+			actualAIModel = "未知模型"
+		}
 	}
 
 	// 创建历史记录，使用实际的AI模型名称，添加AI前缀标识任务类型
@@ -1053,7 +1105,7 @@ func (a *App) processWithAIBatch(pageNumbers []int, prompt string, forceReproces
 				default:
 				}
 
-				result := a.processPageAI(ctx, pageNum, prompt, doc, forceReprocess, historyRecord)
+				result := a.processPageAI(ctx, pageNum, prompt, doc, forceReprocess, contextMode, historyRecord)
 
 				select {
 				case <-ctx.Done():
@@ -1130,7 +1182,7 @@ func (a *App) processWithAIBatch(pageNumbers []int, prompt string, forceReproces
 }
 
 // processPageAI 处理单个页面的AI任务
-func (a *App) processPageAI(ctx context.Context, pageNum int, prompt string, doc *pdf.PDFDocument, forceReprocess bool, historyRecord *history.HistoryRecord) AIProcessResult {
+func (a *App) processPageAI(ctx context.Context, pageNum int, prompt string, doc *pdf.PDFDocument, forceReprocess bool, contextMode bool, historyRecord *history.HistoryRecord) AIProcessResult {
 	startTime := time.Now()
 	result := AIProcessResult{
 		PageNumber: pageNum,
@@ -1145,29 +1197,38 @@ func (a *App) processPageAI(ctx context.Context, pageNum int, prompt string, doc
 
 	page := doc.Pages[pageNum-1]
 
-	// 获取文本内容
-	text := page.OCRText
-	if text == "" {
-		text = page.Text
-	}
+	// 获取上下文内容（包含当前页面和前后页面的内容）
+	currentPageText, _, _, contextPrompt := a.collectContextContent(doc, pageNum, contextMode)
 
-	if text == "" {
+	if currentPageText == "" {
 		result.Error = fmt.Errorf("页面没有可处理的文本")
 		return result
 	}
 
+	// 根据上下文模式设置处理文本
+	var processText string
+	var finalPrompt string
+	if contextMode {
+		// 上下文模式：只发送当前页内容给AI，但在提示词中包含上下文信息
+		processText = currentPageText
+		finalPrompt = contextPrompt + "【重要提示】请严格按照以下指令处理上述第" + fmt.Sprintf("%d", pageNum) + "页的内容，不要包含其他页面的内容：\n\n" + prompt
+	} else {
+		// 普通模式：只使用当前页面内容
+		processText = currentPageText
+		finalPrompt = prompt
+	}
+
 	// 检查缓存（只有在强制重新处理时才跳过缓存）
+	// 注意：单页AI处理通常是用户主动触发的，可能使用不同的提示词或上下文模式
+	// 因此我们不使用缓存，总是进行新的AI处理
 	if !forceReprocess && page.AIText != "" {
-		log.Printf("第%d页AI处理结果已存在，使用缓存", pageNum)
-		result.Result = page.AIText
-		result.Status = fmt.Sprintf("第%d页AI处理完成（缓存）", pageNum)
-		return result
+		log.Printf("第%d页已有AI处理结果，但单页AI处理总是使用新的提示词，跳过缓存")
 	}
 
 	log.Printf("开始AI处理第%d页", pageNum)
 
-	// 使用AI处理
-	aiResult, err := a.ocrClient.ProcessWithAI(ctx, text, prompt)
+	// 使用AI处理（使用上下文内容）
+	aiResult, err := a.ocrClient.ProcessWithAI(ctx, processText, finalPrompt)
 	if err != nil {
 		result.Error = fmt.Errorf("AI处理失败: %w", err)
 		return result
@@ -1203,6 +1264,124 @@ func (a *App) processPageAI(ctx context.Context, pageNum int, prompt string, doc
 
 	log.Printf("第%d页AI处理完成", pageNum)
 	return result
+}
+
+// collectContextContent 收集上下文内容（当前页面的前后页面内容）
+func (a *App) collectContextContent(doc *pdf.PDFDocument, currentPageNum int, contextMode bool) (string, string, string, string) {
+	// 检查是否启用上下文模式
+	if !contextMode {
+		// 未启用上下文模式，只返回当前页面内容
+		if currentPageNum >= 1 && currentPageNum <= len(doc.Pages) {
+			page := doc.Pages[currentPageNum-1]
+			text := page.OCRText
+			if text == "" {
+				text = page.Text
+			}
+			return text, "", "", ""
+		}
+		return "", "", "", ""
+	}
+
+	// 启用上下文模式，分别收集上一页、当前页、下一页内容
+	log.Printf("启用上下文模式，为第%d页收集上下文内容", currentPageNum)
+
+	var prevPageText, currentPageText, nextPageText string
+
+	// 获取上一页内容
+	if currentPageNum > 1 && currentPageNum-1 <= len(doc.Pages) {
+		page := doc.Pages[currentPageNum-2]
+		text := page.OCRText
+		if text == "" {
+			text = page.Text
+		}
+		if strings.TrimSpace(text) != "" {
+			prevPageText = text
+		}
+	}
+
+	// 获取当前页内容
+	if currentPageNum >= 1 && currentPageNum <= len(doc.Pages) {
+		page := doc.Pages[currentPageNum-1]
+		text := page.OCRText
+		if text == "" {
+			text = page.Text
+		}
+		currentPageText = text
+	}
+
+	// 获取下一页内容
+	if currentPageNum < len(doc.Pages) {
+		page := doc.Pages[currentPageNum]
+		text := page.OCRText
+		if text == "" {
+			text = page.Text
+		}
+		if strings.TrimSpace(text) != "" {
+			nextPageText = text
+		}
+	}
+
+	// 构建上下文提示
+	var contextPrompt strings.Builder
+	contextPrompt.WriteString("【上下文信息】\n")
+
+	if prevPageText != "" {
+		contextPrompt.WriteString(fmt.Sprintf("上一页（第%d页）内容：\n%s\n\n", currentPageNum-1, prevPageText))
+	} else {
+		if currentPageNum == 1 {
+			contextPrompt.WriteString("上一页：无（当前是第一页）\n\n")
+		} else {
+			contextPrompt.WriteString("上一页：无内容或为空页\n\n")
+		}
+	}
+
+	contextPrompt.WriteString(fmt.Sprintf("当前页（第%d页）内容：\n%s\n\n", currentPageNum, currentPageText))
+
+	if nextPageText != "" {
+		contextPrompt.WriteString(fmt.Sprintf("下一页（第%d页）内容：\n%s\n\n", currentPageNum+1, nextPageText))
+	} else {
+		if currentPageNum == len(doc.Pages) {
+			contextPrompt.WriteString("下一页：无（当前是最后一页）\n\n")
+		} else {
+			contextPrompt.WriteString("下一页：无内容或为空页\n\n")
+		}
+	}
+
+	contextPrompt.WriteString("【处理要求】\n")
+	contextPrompt.WriteString(fmt.Sprintf("请根据上述上下文信息处理第%d页的内容。\n", currentPageNum))
+	contextPrompt.WriteString("⚠️ 重要限制：\n")
+	contextPrompt.WriteString("1. 只处理和输出第" + fmt.Sprintf("%d", currentPageNum) + "页的内容\n")
+	contextPrompt.WriteString("2. 上一页和下一页的内容仅作为理解上下文的参考，不要在输出中包含它们的内容\n")
+	contextPrompt.WriteString("3. 如果当前页内容与前后页有连续性，可以适当提及相关背景，但主体内容必须是当前页\n")
+	contextPrompt.WriteString("4. 严格按照页面边界进行处理，避免跨页面混合内容\n\n")
+
+	log.Printf("为第%d页收集的上下文内容长度: %d", currentPageNum, len(contextPrompt.String()))
+
+	// 调试日志：输出收集到的内容
+	log.Printf("=== 调试信息：第%d页上下文收集 ===", currentPageNum)
+	log.Printf("上一页内容长度: %d", len(prevPageText))
+	if prevPageText != "" {
+		log.Printf("上一页内容前100字符: %s", truncateString(prevPageText, 100))
+	}
+	log.Printf("当前页内容长度: %d", len(currentPageText))
+	if currentPageText != "" {
+		log.Printf("当前页内容前100字符: %s", truncateString(currentPageText, 100))
+	}
+	log.Printf("下一页内容长度: %d", len(nextPageText))
+	if nextPageText != "" {
+		log.Printf("下一页内容前100字符: %s", truncateString(nextPageText, 100))
+	}
+	log.Printf("=== 调试信息结束 ===")
+
+	return currentPageText, prevPageText, nextPageText, contextPrompt.String()
+}
+
+// truncateString 截断字符串到指定长度
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // ExportText 导出文本

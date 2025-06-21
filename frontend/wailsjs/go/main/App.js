@@ -130,8 +130,20 @@ export function ProcessWithAIBatch(arg1, arg2) {
   return window['go']['main']['App']['ProcessWithAIBatch'](arg1, arg2);
 }
 
+export function ProcessWithAIBatchContext(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ProcessWithAIBatchContext'](arg1, arg2, arg3);
+}
+
 export function ProcessWithAIBatchForce(arg1, arg2) {
   return window['go']['main']['App']['ProcessWithAIBatchForce'](arg1, arg2);
+}
+
+export function ProcessWithAIBatchForceContext(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ProcessWithAIBatchForceContext'](arg1, arg2, arg3);
+}
+
+export function ProcessWithAIContext(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ProcessWithAIContext'](arg1, arg2, arg3);
 }
 
 export function ResumeProcessing() {

@@ -361,6 +361,18 @@ const getTaskTypeForRecord = (record: any) => {
   return 'AI OCR'
 }
 
+// 获取显示用的模型名称（去掉AI-前缀）
+const getDisplayModelName = (modelName: string) => {
+  if (!modelName) return ''
+
+  // 如果有AI-前缀，去掉它
+  if (modelName.startsWith('AI-')) {
+    return modelName.substring(3)
+  }
+
+  return modelName
+}
+
 // 生命周期
 onMounted(async () => {
   loadLastExportFormat()
@@ -664,7 +676,7 @@ const generateExportContent = () => {
       content += `**处理时间:** ${formatDate(record.processed_at)}\n\n`
       content += `**状态:** ${formatStatus(record.status)}\n\n`
       content += `**页数:** ${record.page_count}\n\n`
-      if (record.ai_model) content += `**AI模型:** ${record.ai_model}\n\n`
+      if (record.ai_model) content += `**AI模型:** ${getDisplayModelName(record.ai_model)}\n\n`
       if (record.cost) content += `**成本:** $${record.cost.toFixed(4)}\n\n`
       content += '---\n\n'
       break
@@ -673,7 +685,7 @@ const generateExportContent = () => {
       content += `<p><strong>处理时间:</strong> ${formatDate(record.processed_at)}</p>\n`
       content += `<p><strong>状态:</strong> ${formatStatus(record.status)}</p>\n`
       content += `<p><strong>页数:</strong> ${record.page_count}</p>\n`
-      if (record.ai_model) content += `<p><strong>AI模型:</strong> ${record.ai_model}</p>\n`
+      if (record.ai_model) content += `<p><strong>AI模型:</strong> ${getDisplayModelName(record.ai_model)}</p>\n`
       if (record.cost) content += `<p><strong>成本:</strong> $${record.cost.toFixed(4)}</p>\n`
       content += '<hr>\n'
       break
@@ -686,7 +698,7 @@ const generateExportContent = () => {
       content += `\\cf0\\fs22\\b0\\f1 处理时间: ${formatDate(record.processed_at)}\\par\n`
       content += `状态: ${formatStatus(record.status)}\\par\n`
       content += `页数: ${record.page_count}\\par\n`
-      if (record.ai_model) content += `AI模型: ${record.ai_model}\\par\n`
+      if (record.ai_model) content += `AI模型: ${getDisplayModelName(record.ai_model)}\\par\n`
       if (record.cost) content += `成本: $${record.cost.toFixed(4)}\\par\n`
       content += '\\par\n'
       break
@@ -695,7 +707,7 @@ const generateExportContent = () => {
       content += `处理时间: ${formatDate(record.processed_at)}\n`
       content += `状态: ${formatStatus(record.status)}\n`
       content += `页数: ${record.page_count}\n`
-      if (record.ai_model) content += `AI模型: ${record.ai_model}\n`
+      if (record.ai_model) content += `AI模型: ${getDisplayModelName(record.ai_model)}\n`
       if (record.cost) content += `成本: $${record.cost.toFixed(4)}\n`
       content += '=' + '='.repeat(50) + '\n\n'
   }
@@ -1400,7 +1412,7 @@ const debouncedSearch = () => {
               <div class="record-meta">
                 <span class="record-date">{{ formatDate(record.processed_at) }}</span>
                 <span class="record-pages">{{ record.page_count || 1 }} 页</span>
-                <span v-if="record.ai_model" class="record-model">{{ record.ai_model }}</span>
+                <span v-if="record.ai_model" class="record-model">{{ getDisplayModelName(record.ai_model) }}</span>
               </div>
 
               <!-- 搜索结果显示片段 -->
@@ -1433,7 +1445,7 @@ const debouncedSearch = () => {
                   <strong>页数:</strong> {{ selectedRecord.page_count }}
                 </div>
                 <div v-if="selectedRecord.ai_model" class="meta-item">
-                  <strong>AI模型:</strong> {{ selectedRecord.ai_model }}
+                  <strong>AI模型:</strong> {{ getDisplayModelName(selectedRecord.ai_model) }}
                 </div>
                 <div v-if="selectedRecord.cost" class="meta-item">
                   <strong>成本:</strong> ${{ selectedRecord.cost.toFixed(4) }}
